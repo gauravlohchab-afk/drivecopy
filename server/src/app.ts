@@ -11,7 +11,7 @@ import { apiLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRouter } from './routes/index.js';
 
-export function createApp() {
+export function createApp(opts: { catchAll?: boolean } = {}) {
   const app = express();
   app.disable('x-powered-by');
   if (env.TRUST_PROXY) app.set('trust proxy', env.TRUST_PROXY);
@@ -43,7 +43,9 @@ export function createApp() {
     res.json({ status: 'ok' });
   });
   app.use('/api', apiLimiter, originCheck, apiRouter());
-  app.use(notFoundHandler);
+  app.use('/api', notFoundHandler);
+  // Embedders (e.g. a process that also serves the SPA) can handle non-API paths themselves.
+  if (opts.catchAll !== false) app.use(notFoundHandler);
   app.use(errorHandler);
   return app;
 }
