@@ -1,0 +1,14 @@
+{
+  "name": "drivecopy",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "dev": "npm run dev --workspace server & npm run dev --workspace client",
+    "build": "npm run build --workspace server && npm run build --workspace client",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "engines": { "node": ">=20" }
+}
