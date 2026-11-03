@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router';
-import { Menu as MenuIcon, Search, X, Settings, LogOut } from 'lucide-react';
+import { Menu as MenuIcon, Search, X, Settings, LogOut, SlidersHorizontal } from 'lucide-react';
+import { AdvancedSearch } from './AdvancedSearch';
 import { IconButton } from '../ui/Button';
 import { Menu } from '../ui/Menu';
 import { useAuth, useSignOut } from '../../hooks/useAuth';
@@ -17,6 +18,7 @@ export function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const signOut = useSignOut();
   const avatar = useRef<HTMLButtonElement>(null);
   const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const [advanced, setAdvanced] = useState(false);
 
   useEffect(() => {
     if (location.pathname !== '/search') setQ('');
@@ -51,13 +53,18 @@ export function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
             onChange={(e) => setQ(e.target.value)}
             maxLength={100}
             placeholder={folderId ? 'Search in this folder' : 'Search in Drive'}
-            className="focus-ring h-11 w-full rounded-full border border-transparent bg-slate-200/60 pl-10 pr-10 text-sm placeholder:text-slate-500 focus:border-slate-200 focus:bg-white focus:shadow-sm [&::-webkit-search-cancel-button]:hidden"
+            className="focus-ring h-11 w-full rounded-full border border-transparent bg-slate-200/60 pl-10 pr-20 text-sm placeholder:text-slate-500 focus:border-slate-200 focus:bg-white focus:shadow-sm [&::-webkit-search-cancel-button]:hidden"
           />
-          {q && (
-            <button type="button" aria-label="Clear search" onClick={() => setQ('')} className="focus-ring absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-slate-500 hover:bg-slate-200">
-              <X className="size-4" />
+          <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center">
+            {q && (
+              <button type="button" aria-label="Clear search" onClick={() => setQ('')} className="focus-ring rounded-full p-1.5 text-slate-500 hover:bg-slate-200">
+                <X className="size-4" />
+              </button>
+            )}
+            <button type="button" aria-label="Advanced search" title="Advanced search" onClick={() => setAdvanced(true)} className="focus-ring rounded-full p-2 text-slate-600 hover:bg-slate-300/60">
+              <SlidersHorizontal className="size-4" />
             </button>
-          )}
+          </div>
         </div>
       </form>
       <button
@@ -82,6 +89,7 @@ export function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
           { label: 'Sign out', icon: <LogOut />, onSelect: () => void signOut() },
         ]}
       />
+      <AdvancedSearch open={advanced} onClose={() => setAdvanced(false)} />
     </header>
   );
 }

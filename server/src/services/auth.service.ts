@@ -48,7 +48,7 @@ export const authService = {
   },
 
   async login(input: { email: string; password: string }, userAgent?: string) {
-    const user = await User.findOne({ email: input.email.toLowerCase() }).select('+passwordHash');
+    const user = await User.findOne({ email: input.email.toLowerCase(), kind: { $ne: 'drive' } }).select('+passwordHash');
     const ok = user ? await verify(user.passwordHash, input.password) : (await verify(await DUMMY_HASH_PROMISE, input.password), false);
     if (!user || !ok) throw new AppError(401, 'UNAUTHENTICATED', 'Incorrect email or password');
     if (user.status !== 'active') throw new AppError(403, 'FORBIDDEN', 'This account is disabled');

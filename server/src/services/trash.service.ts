@@ -1,13 +1,14 @@
 import type { Types } from 'mongoose';
-import { Folder, FileModel, User } from '../models/index.js';
+import { Folder, FileModel, Share, User } from '../models/index.js';
 import { notFound } from '../lib/errors.js';
 import { treeLock } from '../lib/lock.js';
 import { folderDto, fileDto } from '../lib/serialize.js';
 import { logger } from '../lib/logger.js';
 import { activeFilter, descendantFolderIds } from './folder.service.js';
 import { s3Service } from './s3.service.js';
+import { activityService } from './activity.service.js';
 
-type Owner = { userId: Types.ObjectId; userIdStr: string };
+type Owner = { userId: Types.ObjectId; userIdStr: string; actorId?: Types.ObjectId };
 
 /**
  * Trash model
@@ -32,16 +33,18 @@ export const trashService = {
       const stamp = { $set: { deletedAt: now, trashRootId: folderId } };
       await Folder.updateMany({ ownerId: owner.userId, _id: { $in: folderIds }, deletedAt: null }, stamp);
       await FileModel.updateMany({ ownerId: owner.userId, parentFolderId: { $in: folderIds }, deletedAt: null, purgePending: false }, stamp);
+      await activityService.record({ actorId: owner.actorId ?? owner.userId, action: 'trash', kind: 'folder', item: folder });
       return { trashed: true };
     });
   },
 
   async trashFile(owner: Owner, fileId: Types.ObjectId) {
-    const res = await FileModel.updateOne(
+    const file = await FileModel.findOneAndUpdate(
       { _id: fileId, ...activeFilter(owner.userId), uploadStatus: 'completed' },
       { $set: { deletedAt: new Date(), trashRootId: fileId } },
-    );
-    if (res.matchedCount === 0) throw notFound('File');
+    ).lean();
+    if (!file) throw notFound('File');
+    await activityService.record({ actorId: owner.actorId ?? owner.userId, action: 'trash', kind: 'file', item: file });
     return { trashed: true };
   },
 
@@ -81,21 +84,29 @@ export const trashService = {
       const unstamp = { $set: { deletedAt: null, trashRootId: null } };
       await Folder.updateMany({ ownerId: owner.userId, trashRootId: id, purgePending: false }, unstamp);
       await FileModel.updateMany({ ownerId: owner.userId, trashRootId: id, purgePending: false }, unstamp);
+      await activityService.record({ actorId: owner.actorId ?? owner.userId, action: 'restore', kind: root.kind, item: root.doc });
       return { restored: true, restoredToRoot, kind: root.kind };
     });
   },
 
   async permanentDelete(owner: Owner, id: Types.ObjectId) {
     await treeLock(owner.userIdStr, async () => {
-      await this.findRoot(owner, id);
+      const root = await this.findRoot(owner, id);
       await markForPurge(owner.userId, { trashRootId: id });
+      await activityService.record({ actorId: owner.actorId ?? owner.userId, action: 'delete', kind: root.kind, item: root.doc });
     });
     return purgeService.run(owner.userId);
   },
 
   async empty(owner: Owner) {
     await treeLock(owner.userIdStr, async () => {
+      const { folders, files } = await this.list(owner);
       await markForPurge(owner.userId, { deletedAt: { $ne: null } });
+      const item = (d: { id: string; name: string }) => ({ _id: d.id, ownerId: owner.userId, name: d.name });
+      await activityService.recordMany([
+        ...folders.map((f) => ({ actorId: owner.actorId ?? owner.userId, action: 'delete' as const, kind: 'folder' as const, item: item(f) })),
+        ...files.map((f) => ({ actorId: owner.actorId ?? owner.userId, action: 'delete' as const, kind: 'file' as const, item: item(f) })),
+      ].slice(0, 500));
     });
     return purgeService.run(owner.userId);
   },
@@ -133,6 +144,7 @@ export const purgeService = {
           continue;
         }
         const removed = await FileModel.findOneAndDelete({ _id: f._id, purgePending: true }).lean();
+        if (removed) await Share.deleteMany({ itemId: removed._id });
         if (removed && removed.uploadStatus === 'completed') {
           await User.updateOne({ _id: removed.ownerId }, { $inc: { storageUsed: -removed.size } });
           freedBytes += removed.size;
@@ -153,6 +165,7 @@ export const purgeService = {
       await FileModel.updateMany(survivors, { $set: { parentFolderId: null } });
       await Folder.updateMany(survivors, { $set: { parentFolderId: null } });
       const res = await Folder.deleteOne({ _id: folder._id, purgePending: true });
+      if (res.deletedCount) await Share.deleteMany({ itemId: folder._id });
       deletedFolders += res.deletedCount;
     }
 

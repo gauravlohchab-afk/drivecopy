@@ -9,7 +9,7 @@ export interface UploadPickersHandle {
 }
 
 /** Hidden native file inputs. Folder upload uses webkitdirectory where the browser supports it. */
-export const UploadPickers = forwardRef<UploadPickersHandle, { parentId: string | null }>(function UploadPickers({ parentId }, ref) {
+export const UploadPickers = forwardRef<UploadPickersHandle, { parentId: string | null; driveId?: string | null }>(function UploadPickers({ parentId, driveId = null }, ref) {
   const files = useRef<HTMLInputElement>(null);
   const folder = useRef<HTMLInputElement>(null);
   const manager = useUploadManager();
@@ -31,7 +31,7 @@ export const UploadPickers = forwardRef<UploadPickersHandle, { parentId: string 
         onChange={(e) => {
           const list = [...(e.target.files ?? [])];
           e.target.value = '';
-          if (list.length) manager.add(list, parentId);
+          if (list.length) manager.add(list, parentId, driveId);
         }}
       />
       <input
@@ -45,7 +45,7 @@ export const UploadPickers = forwardRef<UploadPickersHandle, { parentId: string 
         onChange={(e) => {
           const list = [...(e.target.files ?? [])];
           e.target.value = '';
-          if (list.length) manager.addFolder(list, parentId).catch((err) => toast({ kind: 'error', message: errorMessage(err) }));
+          if (list.length) manager.addFolder(list, parentId, driveId).catch((err) => toast({ kind: 'error', message: errorMessage(err) }));
         }}
       />
     </>

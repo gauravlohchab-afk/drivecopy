@@ -1,8 +1,12 @@
 import type { Types } from 'mongoose';
-import { FileModel, Settlement, User, UploadSession } from '../models/index.js';
+import { FileModel, Folder, Settlement, User, UploadSession } from '../models/index.js';
+import { folderDto } from '../lib/serialize.js';
 import { notFound } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 import { s3Service } from './s3.service.js';
+
+/** Folder sizes are rolled up in memory; very large trees are capped to keep the request bounded. */
+const FOLDER_SCAN_CAP = 20_000;
 
 export const storageService = {
   /** Official usage comes from the server-side counters (see docs/STORAGE_POLICY.md). */
@@ -21,6 +25,46 @@ export const storageService = {
       reserved,
       inTrash: trash[0]?.bytes ?? 0,
       remaining: Math.max(0, user.storageQuota - used - reserved),
+    };
+  },
+
+  /**
+   * Where the space goes: active (not trashed) files by category, and the folders holding the most
+   * data including everything nested inside them. Computed from metadata on request.
+   */
+  async breakdown(userId: Types.ObjectId) {
+    const active = { ownerId: userId, uploadStatus: 'completed', deletedAt: null, purgePending: false };
+    const [byCategory, byParent, folders] = await Promise.all([
+      FileModel.aggregate<{ _id: string; bytes: number; count: number }>([
+        { $match: active },
+        { $group: { _id: '$category', bytes: { $sum: '$size' }, count: { $sum: 1 } } },
+        { $sort: { bytes: -1 } },
+      ]),
+      FileModel.aggregate<{ _id: Types.ObjectId | null; bytes: number }>([
+        { $match: active },
+        { $group: { _id: '$parentFolderId', bytes: { $sum: '$size' } } },
+      ]),
+      Folder.find({ ownerId: userId, deletedAt: null, purgePending: false }).limit(FOLDER_SCAN_CAP).lean(),
+    ]);
+
+    // Roll each folder's direct bytes up to all of its ancestors.
+    const byId = new Map(folders.map((f) => [String(f._id), f]));
+    const totals = new Map<string, number>();
+    for (const { _id, bytes } of byParent) {
+      let current = _id ? byId.get(String(_id)) : undefined;
+      for (let depth = 0; current && depth <= 64; depth++) {
+        totals.set(String(current._id), (totals.get(String(current._id)) ?? 0) + bytes);
+        current = current.parentFolderId ? byId.get(String(current.parentFolderId)) : undefined;
+      }
+    }
+    const largestFolders = [...totals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([id, bytes]) => ({ folder: folderDto(byId.get(id)!), bytes }));
+
+    return {
+      byCategory: byCategory.map((c) => ({ category: c._id, bytes: c.bytes, count: c.count })),
+      largestFolders,
     };
   },
 

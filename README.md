@@ -12,10 +12,15 @@ presigned URLs, and the API verifies every upload server-side before a file appe
 | Files | Upload (single PUT or multipart), real progress, retry, cancel, preview (images, PDF, video/audio streaming, text), download, rename, move, star, multi-select + bulk actions, Trash/restore, permanent delete. |
 | Uploads | Allow-list of types, size limit, atomic quota reservation, presigned URLs with signed `Content-Type`/`Content-Length`, server verification (exists, exact size, magic-number check), idempotent completion, expiry, cleanup of abandoned/multipart uploads, crash recovery. |
 | Discovery | Search by name (whole drive or within a folder), type and date filters, sort by name/date/size, cursor pagination, Recent, Starred. |
+| Home & Activity | Home suggests the folders and files you used most recently plus items recently shared with you. Activity is a server-side log of uploads, new folders, renames, moves, shares, downloads, Trash, restores and permanent deletes (kept 180 days), visible to the person who acted, the owner, and whoever was shared with. |
+| Shared drives | Team-owned spaces: files belong to the drive (and its storage quota), not to whoever uploaded them. Roles: Manager (members, rename, delete), Content manager (add, edit, move, delete, restore), Viewer (view, download). Folders, uploads, preview, move within the drive, per-drive Trash, members dialog, hide per member, leave, delete when empty. Drive files appear in members' search and Activity. |
+| Workspaces | Personal collections of up to 25 files and folders (your own or shared with you) for what you are working on. Create, rename, hide/show, delete; add items from any item menu (multi-select works); remove items. Items stay where they are; trashed or unshared items drop out and return if restored. |
+| Storage page | Usage against quota, a by-type breakdown, the largest folders (including nested content) and a sortable, filterable list of the largest files, all computed from server data. |
+| Sharing | Share a file or folder with another Cirrus user by email (view and download only). Folder shares cover everything inside, including items added later. Owners add and remove people; viewers get a "Shared with me" list, browse shared folders read-only, and can remove items from their list. |
 | Storage | Per-user quota, used/remaining/in-Trash/uploading display, reconciliation tool for counters and S3 orphans. |
 | UI | Responsive (desktop, tablet, phone drawer), grid/list views, context menus, keyboard support, loading skeletons, empty/error/retry states, confirmations, toasts with undo. |
 
-Sharing, version history and collaboration are **not** implemented, so the UI has no controls for them.
+Public links, editor access on personal shares, version history and real-time collaboration are **not** implemented, so the UI has no controls for them.
 
 ## Repository layout
 
@@ -37,6 +42,17 @@ client/            React + Vite + Tailwind SPA
 docs/              API, deployment (AWS setup), security, storage policy, testing
 e2e/               Playwright smoke test run against the e2e harness
 ```
+
+## Try it without AWS or MongoDB
+
+```bash
+npm install
+npm run local        # builds the client, then serves app + API on http://localhost:4000
+```
+
+Runs the real API and UI with an embedded MongoDB and an in-process fake S3. Data (database and
+uploaded files) is kept in `.local-data/`, so it survives restarts; delete that folder to start
+over. Stop with Ctrl+C. This is for trying the app, not for verifying S3 configuration.
 
 ## Quick start (local)
 

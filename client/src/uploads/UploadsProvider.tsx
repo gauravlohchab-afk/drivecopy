@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { UploadManager } from './uploadManager';
+import { invalidateDrive } from '../lib/invalidate';
 
 const Ctx = createContext<UploadManager | null>(null);
 
@@ -8,14 +9,9 @@ export function UploadsProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const manager = useMemo(
     () =>
-      new UploadManager(() => {
-        // Refresh listings and usage once the server has verified an upload.
-        void qc.invalidateQueries({ queryKey: ['contents'] });
-        void qc.invalidateQueries({ queryKey: ['folders'] });
-        void qc.invalidateQueries({ queryKey: ['recent'] });
-        void qc.invalidateQueries({ queryKey: ['search'] });
-        void qc.invalidateQueries({ queryKey: ['usage'] });
-      }),
+      // Refresh every view that can show the new file (My Drive, shared drives, Home, Activity, storage)
+      // once the server has verified an upload.
+      new UploadManager(() => invalidateDrive(qc)),
     [qc],
   );
 

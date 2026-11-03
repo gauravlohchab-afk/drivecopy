@@ -4,11 +4,12 @@ import { AppError, notFound } from '../lib/errors.js';
 import { treeLock } from '../lib/lock.js';
 import { keyset, encodeCursor, SORT_FIELDS, type ListQuery } from '../lib/pagination.js';
 import { folderDto, fileDto } from '../lib/serialize.js';
+import { activityService } from './activity.service.js';
 
 export const MAX_DEPTH = 64;
 const FOLDER_PAGE_CAP = 1000;
 
-type Owner = { userId: Types.ObjectId; userIdStr: string };
+type Owner = { userId: Types.ObjectId; userIdStr: string; actorId?: Types.ObjectId };
 
 /** Active = owned, not trashed, not being purged. Anything else is invisible (404). */
 export const activeFilter = (ownerId: Types.ObjectId) => ({ ownerId, deletedAt: null, purgePending: false });
@@ -89,6 +90,7 @@ export const folderService = {
         throw new AppError(400, 'VALIDATION_ERROR', `Folders can be nested at most ${MAX_DEPTH} levels deep`);
       }
       const folder = await Folder.create({ ownerId: owner.userId, name, parentFolderId });
+      await activityService.record({ actorId: owner.actorId ?? owner.userId, action: 'create_folder', kind: 'folder', item: folder });
       return folderDto(folder.toObject());
     });
   },
@@ -129,13 +131,26 @@ export const folderService = {
     };
   },
 
+  /** Opening a folder counts as activity for Home suggestions (at most once a minute, no updatedAt change). */
+  async touch(owner: Owner, folderId: Types.ObjectId) {
+    await Folder.updateOne(
+      { _id: folderId, ownerId: owner.userId, lastActivityAt: { $lt: new Date(Date.now() - 60_000) } },
+      { $set: { lastActivityAt: new Date() } },
+      { timestamps: false },
+    );
+  },
+
   async update(owner: Owner, folderId: Types.ObjectId, patch: { name?: string; isStarred?: boolean }) {
+    const before = patch.name ? await Folder.findOne({ _id: folderId, ...activeFilter(owner.userId) }, { name: 1 }).lean() : null;
     const folder = await Folder.findOneAndUpdate(
       { _id: folderId, ...activeFilter(owner.userId) },
       { $set: { ...patch, ...(patch.name ? { nameLower: patch.name.toLowerCase() } : {}), lastActivityAt: new Date() } },
       { new: true, runValidators: true },
     ).lean();
     if (!folder) throw notFound('Folder');
+    if (before && before.name !== folder.name) {
+      await activityService.record({ actorId: owner.actorId ?? owner.userId, action: 'rename', kind: 'folder', item: folder, detail: before.name });
+    }
     return folderDto(folder);
   },
 
@@ -149,7 +164,7 @@ export const folderService = {
       if (destinationId && destinationId.equals(folderId)) {
         throw new AppError(400, 'INVALID_MOVE', 'A folder cannot be moved into itself');
       }
-      await resolveDestination(owner.userId, destinationId);
+      const destination = await resolveDestination(owner.userId, destinationId);
       let current = destinationId;
       for (let depth = 0; current; depth++) {
         if (current.equals(folderId)) throw new AppError(400, 'INVALID_MOVE', 'A folder cannot be moved into one of its own subfolders');
@@ -162,6 +177,7 @@ export const folderService = {
       folder.parentFolderId = destinationId;
       folder.lastActivityAt = new Date();
       await folder.save();
+      await activityService.record({ actorId: owner.actorId ?? owner.userId, action: 'move', kind: 'folder', item: folder, detail: destination?.name ?? 'My Drive' });
       return folderDto(folder.toObject());
     });
   },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useCallback, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -42,7 +42,9 @@ export function NameDialog({
     [fieldRef],
   );
 
-  useEffect(() => {
+  // Layout effect: the field must hold the starting name before the dialog becomes visible, or
+  // text typed or pasted in the first frame would be overwritten.
+  useLayoutEffect(() => {
     if (!open) return;
     reset({ name: initial });
     // Focus once per opening and pre-select the name (without the extension for files).
@@ -150,7 +152,10 @@ export function ConfirmDialog({
 
 /** Folder picker for moves. Folders being moved (and therefore their subtrees) are not selectable. */
 export function MoveDialog({ open, items, onClose, onMove }: { open: boolean; items: DriveItem[]; onClose: () => void; onMove: (destination: string | null) => Promise<void> }) {
-  const [trail, setTrail] = useState<{ id: string | null; name: string }[]>([{ id: null, name: 'My Drive' }]);
+  // Items move within their own place: My Drive, or the shared drive they're in.
+  const driveId = items[0]?.driveId ?? null;
+  const rootName = driveId ? items[0]?.driveName ?? 'Shared drive' : 'My Drive';
+  const [trail, setTrail] = useState<{ id: string | null; name: string }[]>([{ id: null, name: rootName }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const current = trail[trail.length - 1]!;
@@ -158,12 +163,13 @@ export function MoveDialog({ open, items, onClose, onMove }: { open: boolean; it
 
   useEffect(() => {
     if (open) {
-      setTrail([{ id: null, name: 'My Drive' }]);
+      setTrail([{ id: null, name: rootName }]);
       setError(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const q = useQuery({ queryKey: ['folders', current.id], queryFn: () => folderApi.list(current.id), enabled: open });
+  const q = useQuery({ queryKey: ['folders', driveId, current.id], queryFn: () => folderApi.list(current.id, driveId), enabled: open });
   const title = items.length === 1 ? `Move “${items[0]!.name}”` : `Move ${items.length} items`;
 
   return (

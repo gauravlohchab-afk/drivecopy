@@ -24,7 +24,11 @@ export const folderController = {
     res.json({ folder: await folderService.get(req.auth!, id(req)) });
   },
   async contents(req: Request, res: Response) {
-    res.json(await folderService.contents(req.auth!, folderParam(req), query(req, contentsQuery)));
+    const folderId = folderParam(req);
+    const q = query(req, contentsQuery);
+    const result = await folderService.contents(req.auth!, folderId, q);
+    if (folderId && !q.cursor) await folderService.touch(req.auth!, folderId);
+    res.json(result);
   },
   async update(req: Request, res: Response) {
     res.json({ folder: await folderService.update(req.auth!, id(req), body(req, updateItemSchema)) });

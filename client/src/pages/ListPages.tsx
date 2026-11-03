@@ -57,7 +57,7 @@ export function StarredPage() {
 export function TrashPage() {
   const prefs = useViewPrefs();
   const actions = useDriveActions();
-  const q = useQuery({ queryKey: ['trash'], queryFn: trashApi.list });
+  const q = useQuery({ queryKey: ['trash'], queryFn: () => trashApi.list() });
   const count = (q.data?.folders.length ?? 0) + (q.data?.files.length ?? 0);
   return (
     <>
@@ -65,7 +65,7 @@ export function TrashPage() {
         title="Trash"
         view={prefs.view}
         onView={prefs.setView}
-        extra={count > 0 && <Button size="sm" variant="ghost" className="mr-1 text-red-600 hover:bg-red-50" onClick={actions.emptyTrash}>Empty Trash</Button>}
+        extra={count > 0 && <Button size="sm" variant="ghost" className="mr-1 text-red-600 hover:bg-red-50" onClick={() => actions.emptyTrash()}>Empty Trash</Button>}
       />
       {count > 0 && (
         <p className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">

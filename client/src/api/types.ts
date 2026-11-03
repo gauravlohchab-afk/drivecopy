@@ -18,6 +18,13 @@ export interface FolderItem {
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Set on items someone else shared with you. */
+  owner?: Person;
+  sharedAt?: string;
+  /** Set on items that live in a shared drive. */
+  driveId?: string;
+  driveRole?: DriveRole;
+  driveName?: string;
 }
 
 export interface FileItem {
@@ -34,9 +41,76 @@ export interface FileItem {
   createdAt: string;
   updatedAt: string;
   lastActivityAt: string;
+  owner?: Person;
+  sharedAt?: string;
+  driveId?: string;
+  driveRole?: DriveRole;
+  driveName?: string;
+}
+
+export type DriveRole = 'viewer' | 'content_manager' | 'manager';
+
+export interface SharedDriveSummary {
+  id: string;
+  name: string;
+  role: DriveRole;
+  hidden: boolean;
+  memberCount: number;
+  createdAt: string;
+  usage?: StorageUsage;
+}
+
+export interface DriveMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: DriveRole;
+  isYou: boolean;
+}
+
+export interface Person {
+  name: string;
+  email: string;
+}
+
+export interface SharePerson extends Person {
+  userId: string;
+  sharedAt: string;
 }
 
 export type DriveItem = FolderItem | FileItem;
+
+export interface ActivityPerson {
+  id: string;
+  name: string;
+  isYou: boolean;
+}
+
+export interface ActivityEntry {
+  id: string;
+  action: 'upload' | 'create_folder' | 'rename' | 'move' | 'trash' | 'restore' | 'delete' | 'share' | 'unshare' | 'download';
+  at: string;
+  actor: ActivityPerson;
+  owner: ActivityPerson;
+  target: ActivityPerson | null;
+  item: { id: string; kind: 'file' | 'folder'; name: string };
+  /** Rename: the old name. Move: the destination folder. */
+  detail: string | null;
+}
+
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  hidden: boolean;
+  itemCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StorageBreakdown {
+  byCategory: { category: FileCategory; bytes: number; count: number }[];
+  largestFolders: { folder: FolderItem; bytes: number }[];
+}
 
 export interface Crumb {
   id: string;

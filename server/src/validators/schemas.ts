@@ -36,7 +36,8 @@ const password = z
 
 export const registerSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(80),
-  email,
+  // .invalid is reserved for shared-drive principals and can never be a real mailbox.
+  email: email.refine((e) => !e.endsWith('.invalid'), 'Enter a valid email address'),
   password,
 });
 export const loginSchema = z.object({ email, password: z.string().min(1, 'Password is required').max(200) });
@@ -68,6 +69,15 @@ export const completeMultipartSchema = z.object({
     .max(10_000)
     .default([]),
 });
+export const shareSchema = z.object({ email });
+const itemRefs = z
+  .array(z.object({ id: objectId, kind: z.enum(['file', 'folder']) }))
+  .max(25, 'A workspace can hold up to 25 files and folders');
+export const createWorkspaceSchema = z.object({ name: itemName, items: itemRefs.default([]) });
+export const updateWorkspaceSchema = z
+  .object({ name: itemName.optional(), hidden: z.boolean().optional() })
+  .refine((v) => v.name !== undefined || v.hidden !== undefined, 'Nothing to update');
+export const workspaceItemsSchema = z.object({ items: itemRefs.min(1, 'Choose at least one item') });
 export const thumbnailSchema = z.object({ ids: z.array(objectId).min(1).max(100) });
 
 const dateParam = z
@@ -77,12 +87,25 @@ const dateParam = z
   .transform((v) => new Date(v))
   .optional();
 
+const flag = z
+  .enum(['true', 'false', '1', '0'])
+  .transform((v) => v === 'true' || v === '1')
+  .optional();
+const bytes = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional();
+
 export const searchQuery = listQuerySchema.extend({
   q: z.string().trim().max(100).optional(),
   folderId: parentRef,
   type: z.enum(['folder', ...FILE_CATEGORIES]).optional(),
   modifiedAfter: dateParam,
   modifiedBefore: dateParam,
+  owner: z.union([z.enum(['any', 'me', 'others']), email]).optional(),
+  location: z.enum(['anywhere', 'mydrive', 'shared']).optional(),
+  inTrash: flag,
+  starred: flag,
+  sharedTo: email.optional(),
+  sizeMin: bytes,
+  sizeMax: bytes,
 });
 export const recentQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),

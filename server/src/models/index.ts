@@ -5,3 +5,7 @@ export { FileModel } from './File.js';
 export { UploadSession } from './UploadSession.js';
 export { Lock } from './Lock.js';
 export { Settlement } from './Settlement.js';
+export { Share } from './Share.js';
+export { Activity, type ActivityAction } from './Activity.js';
+export { Workspace } from './Workspace.js';
+export { SharedDrive, DRIVE_ROLES, type DriveRole } from './SharedDrive.js';

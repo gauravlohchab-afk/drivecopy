@@ -5,6 +5,8 @@ import { trashService } from '../services/trash.service.js';
 import { searchService } from '../services/search.service.js';
 import { storageService } from '../services/storage.service.js';
 import { searchQuery, recentQuery } from '../validators/schemas.js';
+import { activityService } from '../services/activity.service.js';
+import { homeService } from '../services/home.service.js';
 
 export const trashController = {
   async list(req: Request, res: Response) {
@@ -23,7 +25,7 @@ export const trashController = {
 
 export const discoveryController = {
   async search(req: Request, res: Response) {
-    res.json(await searchService.search(req.auth!.userId, query(req, searchQuery)));
+    res.json(await searchService.search(req.auth!, query(req, searchQuery)));
   },
   async recent(req: Request, res: Response) {
     const q = query(req, recentQuery);
@@ -34,5 +36,15 @@ export const discoveryController = {
   },
   async usage(req: Request, res: Response) {
     res.json(await storageService.usage(req.auth!.userId));
+  },
+  async storageBreakdown(req: Request, res: Response) {
+    res.json(await storageService.breakdown(req.auth!.userId));
+  },
+  async home(req: Request, res: Response) {
+    res.json(await homeService.suggestions(req.auth!));
+  },
+  async activity(req: Request, res: Response) {
+    const q = query(req, recentQuery);
+    res.json(await activityService.feed(req.auth!.userId, q.limit, q.cursor));
   },
 };

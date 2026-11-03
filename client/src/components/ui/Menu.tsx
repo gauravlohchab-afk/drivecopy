@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import clsx from 'clsx';
+import { useIsPhone } from '../../hooks/useMediaQuery';
 
 export interface MenuItem {
   label: string;
@@ -17,21 +18,33 @@ interface Props {
   at: { x: number; y: number } | null;
   onClose: () => void;
   label: string;
+  /** Shown at the top of the bottom sheet on phones (e.g. the file the actions apply to). */
+  title?: ReactNode;
 }
 
-/** Keyboard-accessible popup menu (arrow keys, Home/End, Esc), clamped to the viewport. */
-export function Menu({ items, at, onClose, label }: Props) {
+/**
+ * Keyboard-accessible popup menu (arrow keys, Home/End, Esc), clamped to the viewport.
+ * On phones it opens as a bottom sheet with larger touch targets instead.
+ */
+export function Menu({ items, at, onClose, label, title }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const sheet = useIsPhone();
 
   useLayoutEffect(() => {
     if (!at || !ref.current) return;
-    const { width, height } = ref.current.getBoundingClientRect();
-    const left = Math.max(8, Math.min(at.x, window.innerWidth - width - 8));
-    const top = at.y + height + 8 > window.innerHeight ? Math.max(8, at.y - height) : at.y;
-    setPos({ left, top });
-    ref.current.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')?.focus();
-  }, [at]);
+    if (!sheet) {
+      const { width, height } = ref.current.getBoundingClientRect();
+      const left = Math.max(8, Math.min(at.x, window.innerWidth - width - 8));
+      const top = at.y + height + 8 > window.innerHeight ? Math.max(8, at.y - height) : at.y;
+      setPos({ left, top });
+    }
+    ref.current.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')?.focus({ preventScroll: true });
+    // A sheet that doesn't scroll can be dragged from anywhere; a scrolling one only by its header.
+    if (sheet) ref.current.style.touchAction = ref.current.scrollHeight > ref.current.clientHeight ? '' : 'none';
+  }, [at, sheet]);
+
+  const swipe = useSwipeToDismiss(ref, onClose);
 
   useEffect(() => {
     if (!at) return;
@@ -41,15 +54,18 @@ export function Menu({ items, at, onClose, label }: Props) {
     const onResize = () => onClose();
     document.addEventListener('mousedown', close);
     document.addEventListener('touchstart', close);
-    window.addEventListener('resize', onResize);
-    window.addEventListener('scroll', onResize, true);
+    // A sheet doesn't follow its anchor, so page scrolls and mobile toolbar resizes leave it open.
+    if (!sheet) {
+      window.addEventListener('resize', onResize);
+      window.addEventListener('scroll', onResize, true);
+    }
     return () => {
       document.removeEventListener('mousedown', close);
       document.removeEventListener('touchstart', close);
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onResize, true);
     };
-  }, [at, onClose]);
+  }, [at, onClose, sheet]);
 
   if (!at) return null;
 
@@ -65,6 +81,57 @@ export function Menu({ items, at, onClose, label }: Props) {
     e.preventDefault();
   };
 
+  const entries = items.map((item, idx) =>
+    item === 'separator' ? (
+      <div key={`sep-${idx}`} role="separator" className={sheet ? 'mx-5 my-1 border-t border-slate-100' : 'my-1.5 border-t border-slate-100'} />
+    ) : (
+      <button
+        key={item.label}
+        type="button"
+        role="menuitem"
+        disabled={item.disabled}
+        onClick={() => {
+          onClose();
+          item.onSelect();
+        }}
+        className={clsx(
+          'flex w-full items-center text-left outline-none transition-colors disabled:opacity-40',
+          sheet ? 'min-h-12 gap-4 px-5 py-3 text-[15px]' : 'gap-3 px-3.5 py-2 text-sm',
+          item.danger ? 'text-red-600 hover:bg-red-50 focus:bg-red-50' : 'text-slate-700 hover:bg-slate-100 focus:bg-slate-100',
+        )}
+      >
+        <span className={clsx('flex items-center justify-center', sheet ? 'size-5 text-slate-500 [&>svg]:size-5' : 'size-4 [&>svg]:size-4')} aria-hidden>
+          {item.icon}
+        </span>
+        {item.label}
+      </button>
+    ),
+  );
+
+  if (sheet) {
+    return createPortal(
+      <div className="fixed inset-0 z-50">
+        <div aria-hidden className="absolute inset-0 animate-fade-in bg-slate-900/40" />
+        <div
+          ref={ref}
+          {...swipe}
+          className="absolute inset-x-0 bottom-0 max-h-[85dvh] animate-sheet-up overflow-y-auto rounded-t-3xl bg-white pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl"
+        >
+          <div data-sheet-grip className="sticky top-0 z-10 touch-none bg-white">
+            <div aria-hidden className="flex justify-center pb-2 pt-3">
+              <span className="h-1 w-9 rounded-full bg-slate-300" />
+            </div>
+            {title && <div className="flex min-w-0 items-center gap-3 border-b border-slate-100 px-5 pb-3.5 pt-1 text-[15px] font-medium text-slate-900">{title}</div>}
+          </div>
+          <div role="menu" aria-label={label} onKeyDown={onKeyDown} className="py-1.5">
+            {entries}
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
   return createPortal(
     <div
       ref={ref}
@@ -74,34 +141,76 @@ export function Menu({ items, at, onClose, label }: Props) {
       style={{ left: pos?.left ?? at.x, top: pos?.top ?? at.y, visibility: pos ? 'visible' : 'hidden' }}
       className="fixed z-50 min-w-52 animate-pop-in rounded-xl border border-slate-200 bg-white py-1.5 shadow-xl shadow-slate-900/10"
     >
-      {items.map((item, idx) =>
-        item === 'separator' ? (
-          <div key={`sep-${idx}`} role="separator" className="my-1.5 border-t border-slate-100" />
-        ) : (
-          <button
-            key={item.label}
-            type="button"
-            role="menuitem"
-            disabled={item.disabled}
-            onClick={() => {
-              onClose();
-              item.onSelect();
-            }}
-            className={clsx(
-              'flex w-full items-center gap-3 px-3.5 py-2 text-left text-sm outline-none transition-colors disabled:opacity-40',
-              item.danger ? 'text-red-600 hover:bg-red-50 focus:bg-red-50' : 'text-slate-700 hover:bg-slate-100 focus:bg-slate-100',
-            )}
-          >
-            <span className="flex size-4 items-center justify-center [&>svg]:size-4" aria-hidden>
-              {item.icon}
-            </span>
-            {item.label}
-          </button>
-        ),
-      )}
+      {entries}
     </div>,
     document.body,
   );
+}
+
+/**
+ * Drag a bottom sheet down to close it. It follows the finger; a long or fast enough pull slides it
+ * away, anything less springs back. Only starts when the sheet is scrolled to the top (or the drag
+ * starts on its grip), so scrolling a long sheet still works.
+ */
+function useSwipeToDismiss(ref: React.RefObject<HTMLDivElement | null>, onClose: () => void) {
+  const drag = useRef<{ id: number; y: number; t: number; dy: number; active: boolean } | null>(null);
+  const suppressClick = useRef(false);
+
+  const settle = (el: HTMLDivElement, to: string, ms: number) => {
+    el.style.transition = `transform ${ms}ms cubic-bezier(0.2, 0.8, 0.2, 1)`;
+    el.style.transform = to;
+  };
+
+  return {
+    onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+      const el = ref.current;
+      if (!el || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      const onGrip = Boolean((e.target as HTMLElement).closest('[data-sheet-grip]'));
+      if (!onGrip && el.scrollTop > 0) return;
+      drag.current = { id: e.pointerId, y: e.clientY, t: e.timeStamp, dy: 0, active: false };
+    },
+    onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+      const d = drag.current;
+      const el = ref.current;
+      if (!d || !el || e.pointerId !== d.id) return;
+      const dy = e.clientY - d.y;
+      if (!d.active) {
+        if (dy < -6) drag.current = null; // pulling up: leave it to scrolling
+        if (dy <= 6) return;
+        d.active = true;
+        el.setPointerCapture(e.pointerId);
+        el.style.transition = 'none';
+      }
+      d.dy = Math.max(0, dy);
+      el.style.transform = `translateY(${d.dy}px)`;
+    },
+    onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
+      const d = drag.current;
+      const el = ref.current;
+      drag.current = null;
+      if (!d?.active || !el) return;
+      suppressClick.current = true;
+      const velocity = d.dy / Math.max(1, e.timeStamp - d.t);
+      if (d.dy > Math.min(120, el.offsetHeight * 0.3) || velocity > 0.6) {
+        settle(el, `translateY(${el.offsetHeight}px)`, 160);
+        window.setTimeout(onClose, 150);
+      } else {
+        settle(el, '', 200);
+      }
+    },
+    onPointerCancel: () => {
+      const el = ref.current;
+      if (drag.current?.active && el) settle(el, '', 200);
+      drag.current = null;
+    },
+    // A drag that ends over a menu item must not also select it.
+    onClickCapture: (e: React.MouseEvent) => {
+      if (!suppressClick.current) return;
+      suppressClick.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  };
 }
 
 export function anchorBelow(el: HTMLElement) {

@@ -12,6 +12,8 @@ export interface AuthContext {
   userId: Types.ObjectId;
   userIdStr: string;
   tokenHash: string;
+  /** Inside a shared drive userId is the drive's principal; actorId is the signed-in member. */
+  actorId?: Types.ObjectId;
 }
 
 declare module 'express-serve-static-core' {

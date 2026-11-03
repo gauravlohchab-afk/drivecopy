@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { Cloud } from 'lucide-react';
 import clsx from 'clsx';
 import { discoveryApi } from '../../api/endpoints';
 import { formatBytes } from '../../lib/format';
@@ -18,9 +17,6 @@ export function StorageMeter() {
   const pct = quota > 0 ? Math.min(100, ((used + reserved) / quota) * 100) : 0;
   return (
     <div className="px-1">
-      <div className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
-        <Cloud className="size-4 text-slate-500" /> Storage
-      </div>
       <div
         role="progressbar"
         aria-label="Storage used"

@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import { requireAuth, requireCsrf } from '../middleware/auth.js';
-import { authLimiter } from '../middleware/rateLimit.js';
+import { authLimiter, shareLimiter } from '../middleware/rateLimit.js';
 import { authController } from '../controllers/auth.controller.js';
 import { folderController } from '../controllers/folder.controller.js';
 import { fileController } from '../controllers/file.controller.js';
 import { uploadController } from '../controllers/upload.controller.js';
 import { trashController, discoveryController } from '../controllers/misc.controller.js';
+import { shareController } from '../controllers/share.controller.js';
+import { workspaceController } from '../controllers/workspace.controller.js';
+import { driveManagementRoutes, driveContentRouter } from './drives.js';
 
 export function apiRouter() {
   const api = Router();
@@ -61,6 +64,30 @@ export function apiRouter() {
   authed.get('/recent', discoveryController.recent);
   authed.get('/starred', discoveryController.starred);
   authed.get('/storage/usage', discoveryController.usage);
+  authed.get('/storage/breakdown', discoveryController.storageBreakdown);
+  authed.get('/home', discoveryController.home);
+  authed.get('/activity', discoveryController.activity);
+
+  // Sharing: owners manage who has access; viewers get read-only access to what was shared.
+  for (const [path, kind] of [['files', 'file'], ['folders', 'folder']] as const) {
+    authed.get(`/${path}/:id/shares`, shareController.list(kind));
+    authed.post(`/${path}/:id/shares`, shareLimiter, shareController.add(kind));
+    authed.delete(`/${path}/:id/shares/:userId`, shareController.remove(kind));
+  }
+  authed.get('/shared', shareController.sharedWithMe);
+  authed.get('/shared/folders/:id/contents', shareController.folderContents);
+  authed.delete('/shared/:id', shareController.leave);
+
+  authed.get('/workspaces', workspaceController.list);
+  authed.post('/workspaces', workspaceController.create);
+  authed.get('/workspaces/:id', workspaceController.get);
+  authed.patch('/workspaces/:id', workspaceController.update);
+  authed.delete('/workspaces/:id', workspaceController.remove);
+  authed.post('/workspaces/:id/items', workspaceController.addItems);
+  authed.delete('/workspaces/:id/items/:itemId', workspaceController.removeItem);
+
+  driveManagementRoutes(authed);
+  authed.use('/drives/:driveId', driveContentRouter());
 
   api.use(authed);
   return api;

@@ -12,6 +12,8 @@ const userSchema = new Schema(
     // Bytes reserved by uploads that have been initiated but not yet completed or released.
     storageReserved: { type: Number, required: true, default: 0, min: 0 },
     status: { type: String, enum: ['active', 'disabled'], default: 'active', required: true },
+    // "drive": the non-login owner of a shared drive's files (see SharedDrive).
+    kind: { type: String, enum: ['person', 'drive'], default: 'person', required: true },
   },
   { timestamps: true },
 );

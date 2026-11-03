@@ -1,6 +1,6 @@
 import { useId } from 'react';
 
-export function Logo({ className = '' }: { className?: string }) {
+export function Logo({ className = '', tone = 'dark' }: { className?: string; tone?: 'dark' | 'light' }) {
   // Unique per instance: a gradient defined inside a hidden copy of the logo would not render.
   const gid = useId();
   return (
@@ -16,7 +16,7 @@ export function Logo({ className = '' }: { className?: string }) {
         <path d="M10 21.5h12.2a4.3 4.3 0 0 0 .6-8.56A6 6 0 0 0 11.3 14a3.75 3.75 0 0 0-1.3 7.5Z" fill="#fff" />
         <path d="M12.6 18.2h7.6" stroke="#6f5cf2" strokeWidth="1.6" strokeLinecap="round" />
       </svg>
-      <span className="text-lg font-semibold tracking-tight text-slate-900">Cirrus</span>
+      <span className={`text-lg font-semibold tracking-tight ${tone === 'light' ? 'text-white' : 'text-slate-900'}`}>Cirrus</span>
     </span>
   );
 }

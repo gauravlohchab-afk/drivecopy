@@ -4,11 +4,16 @@ import clsx from 'clsx';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { UploadPanel } from './UploadPanel';
+import { BottomNav } from './BottomNav';
+import { NewButton } from './NewButton';
 
 export function AppLayout() {
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
   useEffect(() => setNavOpen(false), [location.pathname]);
+  // Shared items are read-only, so there's nothing to create there.
+  const canCreate = !['/trash', '/settings'].includes(location.pathname) && !location.pathname.startsWith('/shared') && !location.pathname.startsWith('/workspaces')
+    && location.pathname !== '/drives' && !location.pathname.endsWith('/trash');
 
   return (
     <div className="flex h-dvh overflow-hidden bg-slate-50">
@@ -32,7 +37,11 @@ export function AppLayout() {
             <Outlet />
           </div>
         </main>
+        <BottomNav />
       </div>
+      {canCreate && (
+        <NewButton variant="fab" className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-30 md:bottom-6 md:right-6 lg:hidden" />
+      )}
       <UploadPanel />
     </div>
   );

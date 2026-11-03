@@ -9,8 +9,9 @@ import { logger } from '../lib/logger.js';
 import { withLock } from '../lib/lock.js';
 import { resolveDestination } from './folder.service.js';
 import { s3Service, newObjectKey } from './s3.service.js';
+import { activityService } from './activity.service.js';
 
-type Owner = { userId: Types.ObjectId; userIdStr: string };
+type Owner = { userId: Types.ObjectId; userIdStr: string; actorId?: Types.ObjectId };
 
 const OPEN_STATES = ['pending', 'uploading'] as const;
 
@@ -112,7 +113,7 @@ export async function cleanupObjects(session: UploadSessionDoc) {
  * Server-side verification. The browser's word is never enough: the object must exist, have
  * exactly the size that was reserved and signed, and start with the signature its type requires.
  */
-async function verifyAndFinalize(session: UploadSessionDoc) {
+async function verifyAndFinalize(session: UploadSessionDoc, actorId: Types.ObjectId = session.ownerId) {
   const claimed = await UploadSession.findOneAndUpdate(
     { _id: session._id, status: { $in: [...OPEN_STATES, 'verifying'] } },
     { $set: { status: 'verifying' } },
@@ -160,6 +161,7 @@ async function verifyAndFinalize(session: UploadSessionDoc) {
     { _id: session._id },
     { $set: { status: 'completed', verification: { status: 'verified', verifiedAt: new Date(), actualSize: head.size, etag: head.etag ?? null, reason: null } } },
   );
+  await activityService.record({ actorId, action: 'upload', kind: 'file', item: file });
   return { status: 'completed' as const, file: fileDto(file) };
 }
 
@@ -273,7 +275,7 @@ export const uploadService = {
     if (session.status === 'completed') return completedResult(session); // idempotent
     assertOpen(session);
     if (session.multipartUploadId) throw new AppError(400, 'VALIDATION_ERROR', 'Use the multipart completion endpoint');
-    return verifyAndFinalize(session);
+    return verifyAndFinalize(session, owner.actorId ?? owner.userId);
   },
 
   /**
@@ -306,7 +308,7 @@ export const uploadService = {
       await s3Service.completeMultipart(session.s3Key, session.multipartUploadId, parts);
     }
     // Either we just completed it, or a previous attempt did and its response was lost.
-    return verifyAndFinalize(session);
+    return verifyAndFinalize(session, owner.actorId ?? owner.userId);
   },
 
   async abortMultipart(owner: Owner, uploadId: Types.ObjectId) {

@@ -31,7 +31,7 @@ function PreviewBody({ file, onDownload }: { file: FileItem; onDownload: (f: Fil
   const enabled = canPreview(file);
   const q = useQuery({
     queryKey: ['preview', file.id],
-    queryFn: () => fileApi.previewUrl(file.id),
+    queryFn: () => fileApi.previewUrl(file.id, file.driveId),
     enabled,
     staleTime: 5 * 60_000,
     gcTime: 0,

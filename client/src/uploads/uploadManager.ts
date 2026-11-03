@@ -10,6 +10,8 @@ export interface UploadTask {
   name: string;
   size: number;
   parentFolderId: string | null;
+  /** Shared drive the upload goes into (null for My Drive). */
+  driveId: string | null;
   status: UploadStatus;
   /** Bytes confirmed sent by the browser (from XHR progress events, not timers). */
   loaded: number;
@@ -94,7 +96,7 @@ export class UploadManager {
   getSnapshot = () => this.snapshot;
 
   private emit() {
-    this.snapshot = this.tasks.map(({ id, name, size, parentFolderId, status, loaded, error, retryable }) => ({ id, name, size, parentFolderId, status, loaded, error, retryable }));
+    this.snapshot = this.tasks.map(({ id, name, size, parentFolderId, driveId, status, loaded, error, retryable }) => ({ id, name, size, parentFolderId, driveId, status, loaded, error, retryable }));
     this.listeners.forEach((l) => l());
   }
 
@@ -115,13 +117,14 @@ export class UploadManager {
     return this.tasks.filter((t) => ['queued', 'preparing', 'uploading', 'verifying'].includes(t.status)).length;
   }
 
-  add(files: File[], parentFolderId: string | null) {
+  add(files: File[], parentFolderId: string | null, driveId: string | null = null) {
     for (const file of files) {
       this.tasks.push({
         id: `u${++this.seq}`,
         name: file.name,
         size: file.size,
         parentFolderId,
+        driveId,
         status: 'queued',
         loaded: 0,
         retryable: true,
@@ -137,13 +140,13 @@ export class UploadManager {
   }
 
   /** Recreates a dropped/selected folder tree (webkitRelativePath) and uploads into it. */
-  async addFolder(files: File[], parentFolderId: string | null) {
+  async addFolder(files: File[], parentFolderId: string | null, driveId: string | null = null) {
     const created = new Map<string, string | null>([['', parentFolderId]]);
     const ensure = async (dir: string): Promise<string | null> => {
       if (created.has(dir)) return created.get(dir)!;
       const slash = dir.lastIndexOf('/');
       const parent = await ensure(slash === -1 ? '' : dir.slice(0, slash));
-      const { folder } = await folderApi.create(dir.slice(slash + 1), parent);
+      const { folder } = await folderApi.create(dir.slice(slash + 1), parent, driveId);
       created.set(dir, folder.id);
       return folder.id;
     };
@@ -155,7 +158,7 @@ export class UploadManager {
     }
     for (const dir of [...byDir.keys()].sort()) {
       const id = await ensure(dir);
-      this.add(byDir.get(dir)!, id);
+      this.add(byDir.get(dir)!, id, driveId);
     }
     this.onUploaded(parentFolderId);
   }
@@ -168,7 +171,7 @@ export class UploadManager {
     const uploadId = task.uploadId;
     this.update(task, { status: 'cancelled', error: undefined });
     // The server releases reserved quota and deletes any partial object.
-    if (uploadId) uploadApi.cancel(uploadId).catch(() => undefined);
+    if (uploadId) uploadApi.cancel(uploadId, task.driveId).catch(() => undefined);
     this.pump();
   }
 
@@ -214,7 +217,7 @@ export class UploadManager {
         return this.update(task, { status: 'error', retryable: false, error: 'This file type is not allowed' });
       }
       if (!task.uploadId) {
-        const init = await uploadApi.initiate({ name: task.name, size: task.size, mimeType: task.file.type || undefined, parentFolderId: task.parentFolderId }, task.controller.signal);
+        const init = await uploadApi.initiate({ name: task.name, size: task.size, mimeType: task.file.type || undefined, parentFolderId: task.parentFolderId }, task.controller.signal, task.driveId);
         task.uploadId = init.uploadId;
         task.mode = init.mode;
         task.completedParts.clear();
@@ -225,7 +228,7 @@ export class UploadManager {
           await this.runSingle(task, init.url, init.headers);
         }
       } else if (task.mode === 'single') {
-        const fresh = await uploadApi.refreshUrl(task.uploadId);
+        const fresh = await uploadApi.refreshUrl(task.uploadId, task.driveId);
         await this.runSingle(task, fresh.url, fresh.headers);
       }
       if (task.mode === 'multipart') await this.runMultipart(task);
@@ -259,11 +262,11 @@ export class UploadManager {
         // Network drop, expired URL (403) or throttling: back off and retry with a fresh URL.
         await sleep(1000 * 2 ** (attempt - 1), task.controller.signal);
         this.update(task, { loaded: 0 });
-        currentUrl = (await uploadApi.refreshUrl(task.uploadId!)).url;
+        currentUrl = (await uploadApi.refreshUrl(task.uploadId!, task.driveId)).url;
       }
     }
     this.update(task, { status: 'verifying', loaded: task.size });
-    await uploadApi.complete(task.uploadId!);
+    await uploadApi.complete(task.uploadId!, task.driveId);
   }
 
   private async runMultipart(task: Internal) {
@@ -274,7 +277,7 @@ export class UploadManager {
       await this.uploadParts(task, pending);
       this.update(task, { status: 'verifying' });
       try {
-        await uploadApi.completeMultipart(task.uploadId!, [...task.completedParts].map(([partNumber, etag]) => ({ partNumber, etag })));
+        await uploadApi.completeMultipart(task.uploadId!, [...task.completedParts].map(([partNumber, etag]) => ({ partNumber, etag })), task.driveId);
         return;
       } catch (err) {
         const missing = err instanceof ApiError ? (err.details?.missingParts as number[] | undefined) : undefined;
@@ -296,7 +299,7 @@ export class UploadManager {
       this.update(task, { loaded: Math.min(loaded, task.size) });
     };
     const fetchUrls = async (nums: number[]) => {
-      const { parts } = await uploadApi.partUrls(task.uploadId!, nums);
+      const { parts } = await uploadApi.partUrls(task.uploadId!, nums, task.driveId);
       parts.forEach((p) => urls.set(p.partNumber, p.url));
     };
     const worker = async () => {

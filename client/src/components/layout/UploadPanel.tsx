@@ -27,7 +27,7 @@ export function UploadPanel() {
   const title = active ? `Uploading ${active} item${active === 1 ? '' : 's'}` : failed ? `${failed} upload${failed === 1 ? '' : 's'} failed` : 'Uploads complete';
 
   return (
-    <section aria-label="Uploads" className="fixed inset-x-2 bottom-2 z-40 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/15 sm:inset-x-auto sm:right-4 sm:bottom-4 sm:w-96">
+    <section aria-label="Uploads" className="fixed inset-x-2 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 md:bottom-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/15 sm:inset-x-auto sm:right-4 sm:w-96">
       <header className="flex items-center gap-2 bg-slate-900 px-4 py-2.5 text-white">
         <h2 className="flex-1 text-sm font-medium" aria-live="polite">{title}</h2>
         <button type="button" aria-label={collapsed ? 'Expand uploads' : 'Collapse uploads'} onClick={() => setCollapsed((c) => !c)} className="focus-ring rounded p-1 hover:bg-white/10">

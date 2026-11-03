@@ -22,6 +22,11 @@
   404. Destination folders, upload sessions, trash items and thumbnails are all owner-checked.
   Integration tests (`test/integration/isolation.test.ts`) attempt cross-user reads, writes,
   moves, restores, purges and upload hijacking.
+- Sharing grants read access only (list, preview, download). Every shared read re-checks, per
+  request, that the item is alive and that it or one of its current ancestors is shared with the
+  caller; all writes keep the owner-only queries above. Viewers never see the owner's folder
+  names above the shared folder, their stars or parent ids. Shares are deleted with the item on
+  purge. `test/integration/sharing.test.ts` covers access, revocation, moves, Trash and scope.
 
 **Input handling**
 - Every body/query is parsed with zod into plain values before reaching a query; there is no path
@@ -61,6 +66,8 @@
   Malware Protection for S3, or ClamAV on an S3 event) and quarantine flagged objects before preview
   or download.
 - **Account lifecycle:** no email verification, password reset, MFA or account deletion flow.
+- **Account lookup when sharing**: adding someone by email says whether an account exists (rate
+  limited to 60 attempts / 15 min / IP). Switch to invitations if that matters for your users.
 - **Email enumeration on register** (409 on an existing email) is accepted for UX; add verification
   emails if this matters.
 - **Rate limiting is in-memory per instance.** With several API instances behind a load balancer,

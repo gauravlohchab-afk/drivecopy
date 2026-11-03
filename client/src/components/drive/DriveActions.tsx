@@ -1,13 +1,15 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { fileApi, folderApi, trashApi } from '../../api/endpoints';
+import { fileApi, folderApi, shareApi, trashApi } from '../../api/endpoints';
 import { errorMessage } from '../../api/client';
 import type { DriveItem, FileItem } from '../../api/types';
 import { invalidateDrive } from '../../lib/invalidate';
 import { useToast } from '../ui/Toast';
 import { NameDialog, MoveDialog, ConfirmDialog } from './dialogs';
 import { PreviewModal } from './PreviewModal';
+import { ShareDialog } from './ShareDialog';
+import { AddToWorkspaceDialog } from './AddToWorkspaceDialog';
 
 interface Actions {
   open: (item: DriveItem) => void;
@@ -17,21 +19,26 @@ interface Actions {
   move: (items: DriveItem[]) => void;
   star: (items: DriveItem[], starred: boolean) => void;
   trash: (items: DriveItem[]) => void;
-  newFolder: (parentId: string | null) => void;
+  newFolder: (parentId: string | null, driveId?: string | null) => void;
   restore: (items: DriveItem[]) => void;
   purge: (items: DriveItem[]) => void;
-  emptyTrash: () => void;
+  emptyTrash: (driveId?: string | null) => void;
+  share: (item: DriveItem) => void;
+  leaveShared: (items: DriveItem[]) => void;
+  addToWorkspace: (items: DriveItem[]) => void;
 }
 
 const Ctx = createContext<Actions | null>(null);
 
 type Dialog =
   | { type: 'rename'; item: DriveItem }
-  | { type: 'newFolder'; parentId: string | null }
+  | { type: 'newFolder'; parentId: string | null; driveId?: string | null }
   | { type: 'move'; items: DriveItem[] }
   | { type: 'purge'; items: DriveItem[] }
-  | { type: 'emptyTrash' }
+  | { type: 'emptyTrash'; driveId?: string | null }
   | { type: 'trash'; items: DriveItem[] }
+  | { type: 'share'; item: DriveItem }
+  | { type: 'workspace'; items: DriveItem[] }
   | null;
 
 /** Runs one request per item and reports partial failures instead of hiding them. */
@@ -61,7 +68,7 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
   const download = useCallback(
     async (file: FileItem) => {
       try {
-        const { url } = await fileApi.downloadUrl(file.id);
+        const { url } = await fileApi.downloadUrl(file.id, file.driveId);
         // Short-lived URL with Content-Disposition: attachment; the browser streams it to disk.
         const a = document.createElement('a');
         a.href = url;
@@ -78,15 +85,26 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
 
   const actions = useMemo<Actions>(
     () => ({
-      open: (item) => (item.kind === 'folder' ? navigate(`/folders/${item.id}`) : setPreviewing(item)),
+      // Items carrying an owner were shared with the user and open in the read-only views.
+      open: (item) =>
+        item.kind === 'folder'
+          ? navigate(item.driveId ? `/drives/${item.driveId}/folders/${item.id}` : item.owner ? `/shared/folders/${item.id}` : `/folders/${item.id}`)
+          : setPreviewing(item),
       preview: (file) => setPreviewing(file),
       download: (file) => void download(file),
       rename: (item) => setDialog({ type: 'rename', item }),
       move: (items) => setDialog({ type: 'move', items }),
-      newFolder: (parentId) => setDialog({ type: 'newFolder', parentId }),
+      newFolder: (parentId, driveId) => setDialog({ type: 'newFolder', parentId, driveId }),
       trash: (items) => setDialog({ type: 'trash', items }),
       purge: (items) => setDialog({ type: 'purge', items }),
-      emptyTrash: () => setDialog({ type: 'emptyTrash' }),
+      emptyTrash: (driveId) => setDialog({ type: 'emptyTrash', driveId }),
+      share: (item) => setDialog({ type: 'share', item }),
+      addToWorkspace: (items) => setDialog({ type: 'workspace', items }),
+      leaveShared: async (items) => {
+        const r = await each(items, (i) => shareApi.leave(i.id));
+        refresh();
+        report('Removed', r);
+      },
       star: async (items, starred) => {
         const r = await each(items, (i) => (i.kind === 'folder' ? folderApi.star(i.id, starred) : fileApi.star(i.id, starred)));
         refresh();
@@ -94,7 +112,7 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
       },
       restore: async (items) => {
         const results: boolean[] = [];
-        const r = await each(items, async (i) => results.push((await trashApi.restore(i.id)).restoredToRoot));
+        const r = await each(items, async (i) => results.push((await trashApi.restore(i.id, i.driveId)).restoredToRoot));
         refresh();
         report('Restored', r);
         if (results.some(Boolean)) toast({ kind: 'info', message: 'The original folder no longer exists, so some items were restored to My Drive.' });
@@ -104,7 +122,7 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
   );
 
   const doTrash = async (items: DriveItem[]) => {
-    const r = await each(items, (i) => (i.kind === 'folder' ? folderApi.trash(i.id) : fileApi.trash(i.id)));
+    const r = await each(items, (i) => (i.kind === 'folder' ? folderApi.trash(i.id, i.driveId) : fileApi.trash(i.id, i.driveId)));
     refresh();
     if (r.ok) {
       toast({
@@ -118,6 +136,8 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={actions}>
       {children}
+      <ShareDialog item={dialog?.type === 'share' ? dialog.item : null} onClose={close} />
+      <AddToWorkspaceDialog items={dialog?.type === 'workspace' ? dialog.items : null} onClose={close} />
       <NameDialog
         open={dialog?.type === 'newFolder'}
         title="New folder"
@@ -126,7 +146,7 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
         onClose={close}
         onSubmit={async (name) => {
           if (dialog?.type !== 'newFolder') return;
-          await folderApi.create(name, dialog.parentId);
+          await folderApi.create(name, dialog.parentId, dialog.driveId);
           refresh();
         }}
       />
@@ -140,8 +160,8 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
         onSubmit={async (name) => {
           if (dialog?.type !== 'rename') return;
           const it = dialog.item;
-          if (it.kind === 'folder') await folderApi.rename(it.id, name);
-          else await fileApi.rename(it.id, name);
+          if (it.kind === 'folder') await folderApi.rename(it.id, name, it.driveId);
+          else await fileApi.rename(it.id, name, it.driveId);
           refresh();
         }}
       />
@@ -151,7 +171,7 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
         onClose={close}
         onMove={async (dest) => {
           if (dialog?.type !== 'move') return;
-          const r = await each(dialog.items, (i) => (i.kind === 'folder' ? folderApi.move(i.id, dest) : fileApi.move(i.id, dest)));
+          const r = await each(dialog.items, (i) => (i.kind === 'folder' ? folderApi.move(i.id, dest, i.driveId) : fileApi.move(i.id, dest, i.driveId)));
           refresh();
           if (r.ok === 0) throw r.firstError;
           report('Moved', r);
@@ -179,7 +199,7 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
           if (dialog?.type !== 'purge') return;
           let retries = 0;
           const r = await each(dialog.items, async (i) => {
-            retries += (await trashApi.purge(i.id)).pendingRetries;
+            retries += (await trashApi.purge(i.id, i.driveId)).pendingRetries;
           });
           refresh();
           if (r.ok === 0) throw r.firstError;
@@ -195,7 +215,7 @@ export function DriveActionsProvider({ children }: { children: ReactNode }) {
         danger
         onClose={close}
         onConfirm={async () => {
-          const r = await trashApi.empty();
+          const r = await trashApi.empty(dialog?.type === 'emptyTrash' ? dialog.driveId : null);
           refresh();
           toast({ kind: 'success', message: r.pendingRetries ? 'Trash emptied. Some files are still being removed from storage.' : 'Trash emptied' });
         }}

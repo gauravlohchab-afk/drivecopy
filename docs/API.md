@@ -104,6 +104,44 @@ Upload states: `pending → uploading → verifying → completed`, or `failed` 
 The browser must `PUT` the bytes with exactly the returned `Content-Type` header; part uploads
 need the `ETag` response header (exposed by the bucket CORS rule).
 
+## Sharing
+
+Viewer access only: people an item is shared with can list, preview and download it, never change
+it. A folder share covers its whole subtree, checked per request against the item's current
+ancestors, so moves, Trash and unsharing take effect immediately. Items someone else owns come
+back with `owner: {name, email}` (and `sharedAt` on the Shared list), `isStarred: false` and
+`parentFolderId: null`.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/files/:id/shares`, `/folders/:id/shares` | Owner only. `{people: [{userId, name, email, sharedAt}]}` |
+| POST | `/files/:id/shares`, `/folders/:id/shares` | Owner only. `{email}`; 404 if no account uses it, 400 for yourself. Idempotent. Rate limited (60 / 15 min / IP). Returns `{people}` |
+| DELETE | `/files/:id/shares/:userId`, `/folders/:id/shares/:userId` | Owner only. Revokes access; returns `{people}` |
+| GET | `/shared` | Items shared directly with you: `{folders, files}`, newest first. Trashed items are left out |
+| GET | `/shared/folders/:id/contents` | Read-only listing of a shared folder or any folder inside it (same shape as `/folders/:id/contents`). `path` starts at the shared folder |
+| DELETE | `/shared/:id` | Removes an item from your Shared list (drops your own access) |
+
+`POST /files/:id/preview-url`, `/download-url` and `/files/thumbnail-urls` also accept files
+shared with you. Viewers opening a file don't change the owner's Recent list.
+
+## Shared drives
+
+A shared drive owns its files through a non-login principal account (`kind: "drive"`) that also carries its storage quota. Roles: `manager` > `content_manager` > `viewer`. Non-members get 404 for everything about a drive.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/drives` | `{drives: [{id, name, role, hidden, memberCount, createdAt}]}` |
+| POST | `/drives` | `{name}` → `201 {drive}`; you become its manager |
+| GET | `/drives/:id` | `{drive}` with `usage` (the drive's storage) |
+| PATCH | `/drives/:id` | `{name?}` (manager) and/or `{hidden?}` (per member) |
+| DELETE | `/drives/:id` | Manager; 409 unless the drive is empty, Trash included |
+| GET | `/drives/:id/members` | `{members: [{userId, name, email, role, isYou}]}` |
+| POST | `/drives/:id/members` | Manager. `{email, role}`; 404 unknown email, 409 already a member |
+| PATCH | `/drives/:id/members/:userId` | Manager. `{role}`; 400 if it would leave no manager |
+| DELETE | `/drives/:id/members/:userId` | Manager, or yourself (leave); 400 if it would leave no manager |
+
+Inside a drive, the regular routes are available under `/drives/:id`: `folders` (list, create, get, contents, rename, move, trash), `files` (get, rename, move, preview-url, download-url, thumbnail-urls, trash), `uploads/*`, `trash` (list, restore, permanent, empty), `search` and `storage/usage`. Viewers may only GET and request preview/download/thumbnail URLs (403 otherwise); stars are not available on drive items. Every file/folder in these responses carries `driveId` and `driveRole`; global `/search` results from drives also carry `driveName`.
+
 ## Trash, search and the rest
 
 | Method | Path | Notes |
@@ -112,8 +150,18 @@ need the `ETag` response header (exposed by the bucket CORS rule).
 | POST | `/trash/:id/restore` | `{restored, restoredToRoot, kind}` |
 | DELETE | `/trash/:id/permanent` | `{deletedFiles, deletedFolders, freedBytes, pendingRetries}` |
 | DELETE | `/trash` | Empty Trash (same response) |
-| GET | `/search` | `q`, `type` (`folder`, `image`, `video`, `audio`, `pdf`, `document`, `spreadsheet`, `presentation`, `text`, `archive`), `folderId` (searches that folder and its subfolders), `modifiedAfter`, `modifiedBefore` (ISO dates), sort/order/limit/cursor |
+| GET | `/search` | `q` (name), `type` (`folder`, `image`, `video`, `audio`, `pdf`, `document`, `spreadsheet`, `presentation`, `text`, `archive`), `folderId` (that folder and its subfolders), `modifiedAfter`, `modifiedBefore` (ISO dates), `owner` (`any`, `me`, `others` or an email), `location` (`anywhere`, `mydrive`, `shared`), `inTrash`, `starred` (`true`), `sharedTo` (email: items you shared with them), `sizeMin`, `sizeMax` (bytes; files only), sort/order/limit/cursor. Covers your items (paginated) plus, on the first page, items shared with you directly or inside shared folders (up to 200, carrying `owner`) |
 | GET | `/recent` | Files by last activity (upload, rename, move, preview, download) |
 | GET | `/starred` | `{folders, files}` |
 | GET | `/storage/usage` | `{quota, used, reserved, inTrash, remaining}` in bytes |
+| GET | `/home` | Suggested items: `{folders, files}` you used most recently, merged with items recently shared with you (which carry `owner`) |
+| GET | `/activity` | `limit`, `cursor`. `{items: [{id, action, at, actor, owner, target, item: {id, kind, name}, detail}], nextCursor}`. Actions: `upload`, `create_folder`, `rename` (detail = old name), `move` (detail = destination), `trash`, `restore`, `delete`, `share`, `unshare`, `download`. Includes what you did, what happened to your items, and shares with you |
+| GET | `/storage/breakdown` | `{byCategory: [{category, bytes, count}], largestFolders: [{folder, bytes}]}` for active (not trashed) files; folder sizes include subfolders |
+| GET | `/workspaces` | `{workspaces: [{id, name, hidden, itemCount, createdAt, updatedAt}]}` (your own only) |
+| POST | `/workspaces` | `{name, items?: [{id, kind}]}` → `201 {workspace}`. Items must be readable by you (own or shared); max 25 per workspace, 100 workspaces |
+| GET | `/workspaces/:id` | `{workspace, unavailable, folders, files}`; items are re-checked for access on every read, and ones in Trash or no longer shared are counted in `unavailable` instead of listed |
+| PATCH | `/workspaces/:id` | `{name?, hidden?}` |
+| DELETE | `/workspaces/:id` | Deletes the workspace only; its files and folders are untouched |
+| POST | `/workspaces/:id/items` | `{items: [{id, kind}]}`; duplicates ignored, 400 past 25 items |
+| DELETE | `/workspaces/:id/items/:itemId` | Removes the reference only |
 | GET | `/health` | `{status:"ok"}` |

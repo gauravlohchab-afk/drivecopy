@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import clsx from 'clsx';
 import {
-  Check, Download, Eye, FolderInput, FolderOpen, MoreVertical, Pencil, RotateCcw, Star, StarOff, Trash2, X, ArrowUp, ArrowDown,
+  Check, Download, Eye, FolderInput, FolderOpen, MoreVertical, Pencil, RotateCcw, Star, StarOff, Trash2, X, ArrowUp, ArrowDown, UserMinus, UserPlus, Shapes,
 } from 'lucide-react';
 import type { DriveItem, FileItem, FolderItem, SortKey, SortOrder } from '../../api/types';
 import { formatBytes, formatDate } from '../../lib/format';
@@ -14,7 +14,8 @@ import { canPreview } from './PreviewModal';
 import type { ViewMode } from '../../hooks/usePrefs';
 import { useThumbnails } from '../../hooks/useThumbnails';
 
-export type BrowserMode = 'drive' | 'trash';
+/** `shared` is read-only: items someone else owns and shared with the user. */
+export type BrowserMode = 'drive' | 'trash' | 'shared';
 
 interface Props {
   folders: FolderItem[];
@@ -31,6 +32,12 @@ interface Props {
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  /** Shared mode: offer "Remove from Shared" (only on the top-level Shared list). */
+  canLeave?: boolean;
+  /** Grid headings, e.g. "Suggested folders" on Home. */
+  sectionTitles?: { folders: string; files: string };
+  /** Page-specific actions appended to the item menu (e.g. "Remove from workspace"). */
+  extraEntries?: (targets: DriveItem[]) => MenuEntry[];
 }
 
 const isCoarse = () => typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
@@ -42,7 +49,7 @@ export function FileBrowser(props: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; targets: DriveItem[] } | null>(null);
-  const thumbs = useThumbnails(files, view === 'grid' && mode === 'drive');
+  const thumbs = useThumbnails(files, view === 'grid' && mode !== 'trash');
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Drop selections that disappeared after a refresh.
@@ -55,6 +62,8 @@ export function FileBrowser(props: Props) {
   }, [items]);
 
   const selectedItems = items.filter((i) => selected.has(i.id));
+  const readOnlySelection = mode === 'shared' || selectedItems.some((i) => i.owner || i.driveRole === 'viewer');
+  const selectionInDrive = selectedItems.some((i) => i.driveId);
   const clear = useCallback(() => setSelected(new Set()), []);
 
   const onItemClick = (e: React.MouseEvent, item: DriveItem) => {
@@ -97,6 +106,12 @@ export function FileBrowser(props: Props) {
   };
 
   const menuEntries = (targets: DriveItem[]): MenuEntry[] => {
+    const entries = baseEntries(targets);
+    const extra = mode === 'trash' ? [] : props.extraEntries?.(targets) ?? [];
+    return extra.length ? [...entries, 'separator', ...extra] : entries;
+  };
+
+  const baseEntries = (targets: DriveItem[]): MenuEntry[] => {
     if (mode === 'trash') {
       return [
         { label: 'Restore', icon: <RotateCcw />, onSelect: () => actions.restore(targets) },
@@ -105,6 +120,23 @@ export function FileBrowser(props: Props) {
       ];
     }
     const single = targets.length === 1 ? targets[0]! : null;
+    // Shared-drive items are team-owned: no personal sharing, stars or workspaces.
+    const inDrive = targets.some((t) => t.driveId);
+    // Items someone else owns (or a drive you only view) get read actions, wherever they appear.
+    if (mode === 'shared' || targets.some((t) => t.owner || t.driveRole === 'viewer')) {
+      const entries: MenuEntry[] = [];
+      if (single?.kind === 'folder') entries.push({ label: 'Open', icon: <FolderOpen />, onSelect: () => actions.open(single) });
+      if (single?.kind === 'file') {
+        entries.push({ label: 'Preview', icon: <Eye />, onSelect: () => actions.preview(single), disabled: !canPreview(single) });
+        entries.push({ label: 'Download', icon: <Download />, onSelect: () => actions.download(single) });
+      }
+      if (!inDrive) entries.push({ label: 'Add to workspace', icon: <Shapes />, onSelect: () => actions.addToWorkspace(targets) });
+      if (props.canLeave && mode === 'shared') {
+        if (entries.length) entries.push('separator');
+        entries.push({ label: 'Remove from Shared', icon: <UserMinus />, onSelect: () => actions.leaveShared(targets) });
+      }
+      return entries;
+    }
     const allStarred = targets.every((t) => t.isStarred);
     const entries: MenuEntry[] = [];
     if (single?.kind === 'folder') entries.push({ label: 'Open', icon: <FolderOpen />, onSelect: () => actions.open(single) });
@@ -112,13 +144,18 @@ export function FileBrowser(props: Props) {
       entries.push({ label: 'Preview', icon: <Eye />, onSelect: () => actions.preview(single), disabled: !canPreview(single) });
       entries.push({ label: 'Download', icon: <Download />, onSelect: () => actions.download(single) });
     }
+    if (single && !inDrive) entries.push({ label: 'Share', icon: <UserPlus />, onSelect: () => actions.share(single) });
     if (single) entries.push({ label: 'Rename', icon: <Pencil />, onSelect: () => actions.rename(single) });
-    entries.push({ label: 'Move', icon: <FolderInput />, onSelect: () => actions.move(targets) });
-    entries.push(
-      allStarred
-        ? { label: 'Remove from Starred', icon: <StarOff />, onSelect: () => actions.star(targets, false) }
-        : { label: 'Add to Starred', icon: <Star />, onSelect: () => actions.star(targets, true) },
-    );
+    if (!inDrive) entries.push({ label: 'Add to workspace', icon: <Shapes />, onSelect: () => actions.addToWorkspace(targets) });
+    // Moves stay within one place (My Drive or a single shared drive).
+    if (new Set(targets.map((t) => t.driveId ?? null)).size === 1) entries.push({ label: 'Move', icon: <FolderInput />, onSelect: () => actions.move(targets) });
+    if (!inDrive) {
+      entries.push(
+        allStarred
+          ? { label: 'Remove from Starred', icon: <StarOff />, onSelect: () => actions.star(targets, false) }
+          : { label: 'Add to Starred', icon: <Star />, onSelect: () => actions.star(targets, true) },
+      );
+    }
     entries.push('separator', { label: 'Move to Trash', icon: <Trash2 />, danger: true, onSelect: () => actions.trash(targets) });
     return entries;
   };
@@ -132,7 +169,9 @@ export function FileBrowser(props: Props) {
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedItems.length) {
       e.preventDefault();
       if (mode === 'trash') actions.purge(selectedItems);
-      else actions.trash(selectedItems);
+      else if (readOnlySelection) {
+        if (props.canLeave) actions.leaveShared(selectedItems);
+      } else actions.trash(selectedItems);
     } else if (e.key === 'F2' && selectedItems.length === 1 && mode === 'drive') {
       e.preventDefault();
       actions.rename(selectedItems[0]!);
@@ -146,6 +185,7 @@ export function FileBrowser(props: Props) {
   const itemProps = (item: DriveItem) => ({
     item,
     mode,
+    sortable: Boolean(props.onSort),
     selected: selected.has(item.id),
     thumb: item.kind === 'file' ? thumbs[item.id] : undefined,
     onClick: (e: React.MouseEvent) => onItemClick(e, item),
@@ -166,7 +206,16 @@ export function FileBrowser(props: Props) {
         </div>
       ) : (
         <SelectionBar count={selectedItems.length} onClear={clear}>
-          {mode === 'trash' ? (
+          {readOnlySelection ? (
+            <>
+              {selectedItems.length === 1 && selectedItems[0]!.kind === 'file' && (
+                <IconButton label="Download" onClick={() => actions.download(selectedItems[0] as FileItem)}><Download className="size-4" /></IconButton>
+              )}
+              {props.canLeave && (
+                <IconButton label="Remove from Shared" onClick={() => actions.leaveShared(selectedItems)}><UserMinus className="size-4" /></IconButton>
+              )}
+            </>
+          ) : mode === 'trash' ? (
             <>
               <IconButton label="Restore" onClick={() => actions.restore(selectedItems)}><RotateCcw className="size-4" /></IconButton>
               <IconButton label="Delete forever" onClick={() => actions.purge(selectedItems)}><Trash2 className="size-4" /></IconButton>
@@ -176,13 +225,18 @@ export function FileBrowser(props: Props) {
               {selectedItems.length === 1 && selectedItems[0]!.kind === 'file' && (
                 <IconButton label="Download" onClick={() => actions.download(selectedItems[0] as FileItem)}><Download className="size-4" /></IconButton>
               )}
+              {selectedItems.length === 1 && !selectionInDrive && (
+                <IconButton label="Share" onClick={() => actions.share(selectedItems[0]!)}><UserPlus className="size-4" /></IconButton>
+              )}
               <IconButton label="Move" onClick={() => actions.move(selectedItems)}><FolderInput className="size-4" /></IconButton>
-              <IconButton
-                label={selectedItems.every((i) => i.isStarred) ? 'Remove from Starred' : 'Add to Starred'}
-                onClick={() => actions.star(selectedItems, !selectedItems.every((i) => i.isStarred))}
-              >
-                {selectedItems.every((i) => i.isStarred) ? <StarOff className="size-4" /> : <Star className="size-4" />}
-              </IconButton>
+              {!selectionInDrive && (
+                <IconButton
+                  label={selectedItems.every((i) => i.isStarred) ? 'Remove from Starred' : 'Add to Starred'}
+                  onClick={() => actions.star(selectedItems, !selectedItems.every((i) => i.isStarred))}
+                >
+                  {selectedItems.every((i) => i.isStarred) ? <StarOff className="size-4" /> : <Star className="size-4" />}
+                </IconButton>
+              )}
               <IconButton label="Move to Trash" onClick={() => actions.trash(selectedItems)}><Trash2 className="size-4" /></IconButton>
             </>
           )}
@@ -193,7 +247,7 @@ export function FileBrowser(props: Props) {
         <div className="space-y-6">
           {folders.length > 0 && (
             <section aria-label="Folders">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Folders</h3>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{props.sectionTitles?.folders ?? 'Folders'}</h3>
               <ul role="listbox" aria-multiselectable="true" aria-label="Folders" className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3">
                 {folders.map((f) => <FolderTile key={f.id} {...itemProps(f)} />)}
               </ul>
@@ -201,7 +255,7 @@ export function FileBrowser(props: Props) {
           )}
           {files.length > 0 && (
             <section aria-label="Files">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Files</h3>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{props.sectionTitles?.files ?? 'Files'}</h3>
               <ul role="listbox" aria-multiselectable="true" aria-label="Files" className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3 sm:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))]">
                 {files.map((f) => <FileCard key={f.id} {...itemProps(f)} />)}
               </ul>
@@ -212,7 +266,7 @@ export function FileBrowser(props: Props) {
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <div className="hidden grid-cols-[minmax(0,1fr)_9rem_6rem_2.5rem] items-center gap-4 border-b border-slate-100 px-4 py-2 text-xs font-semibold text-slate-500 md:grid">
             <SortHeader label="Name" k="name" {...props} />
-            <SortHeader label={mode === 'trash' ? 'Trashed' : 'Modified'} k="modified" {...props} />
+            {mode === 'shared' && !props.onSort ? <span>Owner</span> : <SortHeader label={mode === 'trash' ? 'Trashed' : 'Modified'} k="modified" {...props} />}
             <SortHeader label="Size" k="size" {...props} />
             <span />
           </div>
@@ -228,7 +282,17 @@ export function FileBrowser(props: Props) {
         </div>
       )}
 
-      <Menu label="Item actions" at={menu?.at ?? null} items={menu ? menuEntries(menu.targets) : []} onClose={() => setMenu(null)} />
+      <Menu
+        label="Item actions"
+        at={menu?.at ?? null}
+        items={menu ? menuEntries(menu.targets) : []}
+        title={menu && (menu.targets.length === 1 ? (
+          <><FileIcon item={menu.targets[0]!} size="sm" /><span className="truncate">{menu.targets[0]!.name}</span></>
+        ) : (
+          <span>{menu.targets.length} items selected</span>
+        ))}
+        onClose={() => setMenu(null)}
+      />
     </div>
   );
 }
@@ -262,6 +326,8 @@ function SortHeader({ label, k, sort, order, onSort }: { label: string; k: SortK
 interface ItemProps {
   item: DriveItem;
   mode: BrowserMode;
+  /** The list has sort headers (the date column then shows dates, not owners). */
+  sortable: boolean;
   selected: boolean;
   thumb?: string;
   onClick: (e: React.MouseEvent) => void;
@@ -389,7 +455,7 @@ function FileCard(p: ItemProps) {
       <div className="flex items-center gap-2 border-t border-slate-100 py-1.5 pl-3 pr-1">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-slate-800" title={f.name}>{f.name}</p>
-          <p className="truncate text-xs text-slate-500">{formatBytes(f.size)} · {formatDate(p.mode === 'trash' ? f.deletedAt : f.updatedAt)}</p>
+          <p className="truncate text-xs text-slate-500">{f.owner && p.mode === 'shared' ? f.owner.name : formatBytes(f.size)} · {formatDate(p.mode === 'trash' ? f.deletedAt : f.updatedAt)}</p>
         </div>
         <MoreButton onMenuButton={p.onMenuButton} name={f.name} />
       </div>
@@ -415,12 +481,12 @@ function Row(p: ItemProps) {
             {it.isStarred && <Star className="size-3.5 shrink-0 fill-amber-400 text-amber-400" aria-label="Starred" />}
           </p>
           <p className="truncate text-xs text-slate-500 md:hidden">
-            {typeLabel(it)} · {formatDate(p.mode === 'trash' ? it.deletedAt : it.updatedAt)}
+            {p.mode === 'shared' && it.owner ? `Shared by ${it.owner.name}` : typeLabel(it)} · {formatDate(p.mode === 'trash' ? it.deletedAt : it.updatedAt)}
             {it.kind === 'file' && ` · ${formatBytes(it.size)}`}
           </p>
         </div>
       </div>
-      <span className="hidden text-sm text-slate-500 md:block">{formatDate(p.mode === 'trash' ? it.deletedAt : it.updatedAt)}</span>
+      <span className="hidden truncate text-sm text-slate-500 md:block">{p.mode === 'shared' && it.owner && !p.sortable ? it.owner.name : formatDate(p.mode === 'trash' ? it.deletedAt : it.updatedAt)}</span>
       <span className="hidden text-sm text-slate-500 md:block">{it.kind === 'file' ? formatBytes(it.size) : '—'}</span>
       <MoreButton onMenuButton={p.onMenuButton} name={it.name} />
     </li>

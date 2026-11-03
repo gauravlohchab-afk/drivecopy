@@ -16,6 +16,15 @@ export const authLimiter = rateLimit({
   handler,
 });
 
+/** Adding people by email reveals whether an account exists, so it is throttled per client. */
+export const shareLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: testing ? 1000 : 60,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  handler,
+});
+
 export const apiLimiter = rateLimit({
   windowMs: 60_000,
   limit: testing ? 100_000 : 600,

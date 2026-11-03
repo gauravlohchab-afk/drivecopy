@@ -10,6 +10,12 @@ import { DrivePage } from './pages/DrivePage';
 import { RecentPage, StarredPage, TrashPage } from './pages/ListPages';
 import { SearchPage } from './pages/SearchPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { SharedPage, SharedFolderPage } from './pages/SharedPages';
+import { HomePage } from './pages/HomePage';
+import { ActivityPage } from './pages/ActivityPage';
+import { StoragePage } from './pages/StoragePage';
+import { WorkspacesPage, WorkspacePage } from './pages/WorkspacePages';
+import { SharedDrivesPage, DriveTrashPage } from './pages/SharedDrivePages';
 
 /** Client-side guard for UX only. Every API route enforces authentication on the server. */
 function RequireAuth() {
@@ -42,15 +48,26 @@ const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: '/', element: <Navigate to="/drive" replace /> },
+          { path: '/', element: <Navigate to="/home" replace /> },
+          { path: '/home', element: <HomePage /> },
+          { path: '/activity', element: <ActivityPage /> },
+          { path: '/workspaces', element: <WorkspacesPage /> },
+          { path: '/workspaces/:workspaceId', element: <WorkspacePage /> },
+          { path: '/storage', element: <StoragePage /> },
           { path: '/drive', element: <DrivePage /> },
           { path: '/folders/:folderId', element: <DrivePage /> },
+          { path: '/drives', element: <SharedDrivesPage /> },
+          { path: '/drives/:driveId', element: <DrivePage /> },
+          { path: '/drives/:driveId/folders/:folderId', element: <DrivePage /> },
+          { path: '/drives/:driveId/trash', element: <DriveTrashPage /> },
           { path: '/recent', element: <RecentPage /> },
           { path: '/starred', element: <StarredPage /> },
           { path: '/trash', element: <TrashPage /> },
+          { path: '/shared', element: <SharedPage /> },
+          { path: '/shared/folders/:folderId', element: <SharedFolderPage /> },
           { path: '/search', element: <SearchPage /> },
           { path: '/settings', element: <SettingsPage /> },
-          { path: '*', element: <Navigate to="/drive" replace /> },
+          { path: '*', element: <Navigate to="/home" replace /> },
         ],
       },
     ],
