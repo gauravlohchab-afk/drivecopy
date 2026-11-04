@@ -1,12 +1,12 @@
 {
-  "name": "drivecopy",
+  "name": "ageless-datahub",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["server", "client"],
+  "workspaces": ["backend", "frontend"],
   "scripts": {
-    "dev": "npm run dev --workspace server & npm run dev --workspace client",
-    "local": "npm run build --workspace client && npm run local --workspace server",
-    "build": "npm run build --workspace server && npm run build --workspace client",
+    "dev": "npm run dev --workspace backend & npm run dev --workspace frontend",
+    "local": "npm run build --workspace frontend && npm run local --workspace backend",
+    "build": "npm run build --workspace backend && npm run build --workspace frontend",
     "typecheck": "npm run typecheck --workspaces",
     "lint": "npm run lint --workspaces",
     "test": "npm run test --workspaces"

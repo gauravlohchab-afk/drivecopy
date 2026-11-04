@@ -2,6 +2,8 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 // Browser smoke test for the UI. Start the harness first (see docs/TESTING.md), then: node e2e/smoke.cjs
 const OUT = process.env.SHOTS_DIR ?? __dirname + '/shots';
+const ADMIN_USERNAME = process.env.E2E_ADMIN_USERNAME ?? 'admin';
+const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? 'test-admin-password-123';
 fs.mkdirSync(OUT, { recursive: true });
 
 function pdf(n) { const b = Buffer.alloc(n, 0x20); b.write('%PDF-1.4\n'); return b; }
@@ -24,21 +26,41 @@ function mp4(n) { const b = Buffer.alloc(n, 7); b.write('\0\0\0\x20ftypisom', 'l
   });
   const step = async (name, fn) => { process.stdout.write(`- ${name} ... `); await fn(); console.log('ok'); };
 
-  await step('register', async () => {
-    await page.goto('http://localhost:4000/');
+  const sidebar = () => page.getByRole('navigation', { name: 'Main' }).first();
+
+  await step('login page only offers signing in', async () => {
+    await page.goto('http://localhost:4000/drive');
     await page.waitForURL('**/login');
     await page.screenshot({ path: `${OUT}/01-login.png` });
-    await page.getByRole('link', { name: 'Create an account' }).click();
-    await page.getByLabel('Name').fill('Robin');
-    await page.getByLabel('Email').fill('robin@example.com');
-    await page.getByLabel('Password').fill('short');
-    await page.getByRole('button', { name: 'Create account' }).click();
-    await page.getByText('Use at least 10 characters').waitFor();
-    await page.getByLabel('Password').fill('a-good-passw0rd');
-    await page.getByRole('button', { name: 'Create account' }).click();
-    await page.waitForURL('**/drive');
+    if (/create (an )?account|sign up|register/i.test(await page.locator('body').innerText())) throw new Error('registration is still offered');
+    await page.goto('http://localhost:4000/register');
+    await page.waitForURL('**/login');
+  });
+
+  await step('wrong password is rejected, show/hide works', async () => {
+    await page.getByLabel('Username or email').fill(ADMIN_USERNAME);
+    await page.getByLabel('Password', { exact: true }).fill('not-the-password');
+    await page.getByRole('button', { name: 'Show password' }).click();
+    if ((await page.getByLabel('Password', { exact: true }).getAttribute('type')) !== 'text') throw new Error('password not shown');
+    await page.getByRole('button', { name: 'Hide password' }).click();
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByText('Incorrect username or password').waitFor();
+  });
+
+  await step('sign in, sidebar has exactly the four main sections', async () => {
+    await page.getByLabel('Password', { exact: true }).fill(ADMIN_PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.waitForURL('**/home');
+    const links = (await sidebar().getByRole('link').allInnerTexts()).map((t) => t.trim()).filter((t) => t !== 'Settings');
+    if (links.join() !== 'Home,My Drive,Activity,Trash') throw new Error('sidebar links: ' + links.join());
+    await sidebar().getByText('AWS S3 Storage').waitFor();
+    await sidebar().getByText('Connected').waitFor();
+    await page.screenshot({ path: `${OUT}/02-home.png` });
+    for (const [name, path] of [['Activity', '/activity'], ['Trash', '/trash'], ['My Drive', '/drive']]) {
+      await sidebar().getByRole('link', { name }).click();
+      await page.waitForURL(`**${path}`);
+    }
     await page.getByText('Your drive is empty').waitFor();
-    await page.screenshot({ path: `${OUT}/02-empty-drive.png` });
   });
 
   await step('create folder + nested folder', async () => {
@@ -98,12 +120,9 @@ function mp4(n) { const b = Buffer.alloc(n, 7); b.write('\0\0\0\x20ftypisom', 'l
     await page.getByRole('button', { name: 'List view' }).click();
     await page.waitForTimeout(400);
     await page.screenshot({ path: `${OUT}/06-list-view.png` });
-    await page.getByRole('link', { name: 'Starred' }).first().click();
-    await page.getByRole('option', { name: /Q3 report\.pdf/ }).waitFor();
   });
 
   await step('move file into nested folder', async () => {
-    await page.goBack();
     await page.getByRole('option', { name: /mockup\.png/ }).click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Move', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: /Projects/ }).click();
@@ -139,9 +158,35 @@ function mp4(n) { const b = Buffer.alloc(n, 7); b.write('\0\0\0\x20ftypisom', 'l
     await page.screenshot({ path: `${OUT}/08-search.png` });
   });
 
-  await step('storage meter shows real usage', async () => {
-    const t = await page.getByRole('navigation', { name: 'Main' }).first().innerText();
-    if (!/12\.\d MB of 100 MB used/.test(t)) throw new Error('usage text: ' + t);
+  await step('storage panel shows real usage and no capacity limit', async () => {
+    const panel = sidebar().getByRole('region', { name: 'AWS S3 Storage' });
+    await panel.getByText(/^12\.\d MB$/).waitFor();
+    const t = await panel.innerText();
+    if (!/Total files\s*3/.test(t) || !/Amazon S3/.test(t) || !/Connected/.test(t)) throw new Error('storage text: ' + t);
+    if (/ of \d|% |free|GB total/i.test(t)) throw new Error('capacity shown: ' + t);
+  });
+
+  await step('activity page shows events, with search and filters', async () => {
+    await sidebar().getByRole('link', { name: 'Activity' }).click();
+    await page.getByRole('heading', { name: 'Today' }).waitFor();
+    for (const text of ['Uploaded a file', 'Renamed a file', 'Moved a file', 'Created a folder', 'Previewed a file', 'Signed in', 'Failed sign-in attempt']) {
+      await page.getByText(text).first().waitFor();
+    }
+    await page.screenshot({ path: `${OUT}/08b-activity.png` });
+    await page.getByLabel('Search activity').fill('mockup');
+    await page.getByText('Created a folder').first().waitFor({ state: 'detached' });
+    await page.getByText('mockup.png').first().waitFor();
+    await page.getByLabel('Search activity').fill('no-such-thing');
+    await page.getByText('No matching activity').waitFor();
+    await page.getByLabel('Search activity').fill('');
+    await page.getByLabel('Activity type').selectOption('auth');
+    await page.getByText('Signed in').first().waitFor();
+    await page.getByText('Uploaded a file').first().waitFor({ state: 'detached' });
+    await page.getByLabel('Activity type').selectOption('');
+    await page.getByLabel('Status').selectOption('FAILED');
+    await page.getByText('Failed sign-in attempt').first().waitFor();
+    await page.getByText('Signed in', { exact: true }).first().waitFor({ state: 'detached' });
+    await page.getByLabel('Status').selectOption('');
   });
 
   await step('permanent delete', async () => {
@@ -153,9 +198,9 @@ function mp4(n) { const b = Buffer.alloc(n, 7); b.write('\0\0\0\x20ftypisom', 'l
     await page.getByRole('button', { name: 'Empty Trash' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Empty Trash' }).click();
     await page.getByText('Trash is empty').waitFor();
-    await page.waitForTimeout(500);
-    const t = await page.getByRole('navigation', { name: 'Main' }).first().innerText();
-    if (!/0 B of 100 MB used/.test(t)) throw new Error('usage after purge: ' + t);
+    const panel = sidebar().getByRole('region', { name: 'AWS S3 Storage' });
+    await panel.getByText('0 B', { exact: true }).waitFor();
+    if (!/Total files\s*0/.test(await panel.innerText())) throw new Error('usage after purge: ' + (await panel.innerText()));
   });
 
   for (const [name, w, h] of [['tablet', 820, 1180], ['mobile', 390, 844]]) {
@@ -169,6 +214,10 @@ function mp4(n) { const b = Buffer.alloc(n, 7); b.write('\0\0\0\x20ftypisom', 'l
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       await page.screenshot({ path: `${OUT}/09-${name}.png` });
       if (overflow > 0) throw new Error(`overflow ${overflow}px`);
+      if (name === 'mobile') {
+        const tabs = (await page.getByRole('navigation', { name: 'Sections' }).getByRole('link').allInnerTexts()).map((t) => t.trim());
+        if (tabs.join() !== 'Home,Drive,Activity,Trash') throw new Error('bottom nav: ' + tabs.join());
+      }
       await page.getByRole('button', { name: 'Open navigation' }).click();
       await page.waitForTimeout(300);
       await page.screenshot({ path: `${OUT}/10-${name}-nav.png` });

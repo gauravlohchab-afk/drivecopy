@@ -7,7 +7,7 @@ bucket and check the end-to-end flows before going to production.
 
 ```bash
 export AWS_REGION=eu-west-1
-export BUCKET=yourcompany-cirrus-prod          # globally unique
+export BUCKET=yourcompany-ageless-datahub-prod          # globally unique
 aws s3api create-bucket --bucket "$BUCKET" --region "$AWS_REGION" \
   --create-bucket-configuration LocationConstraint="$AWS_REGION"   # omit this flag for us-east-1
 ```
@@ -102,15 +102,26 @@ only for local development, with a dedicated IAM user scoped to a dev bucket.
       "Resource": "arn:aws:s3:::BUCKET/users/*"
     },
     {
+      "Sid": "ActivityLogs",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": "arn:aws:s3:::BUCKET/activity-logs/*"
+    },
+    {
       "Sid": "BucketListing",
       "Effect": "Allow",
       "Action": ["s3:ListBucket", "s3:ListBucketMultipartUploads"],
       "Resource": "arn:aws:s3:::BUCKET",
-      "Condition": { "StringLike": { "s3:prefix": ["users/*"] } }
+      "Condition": { "StringLike": { "s3:prefix": ["users/*", "activity-logs/*"] } }
     }
   ]
 }
 ```
+
+The `ActivityLogs` statement deliberately has no `s3:DeleteObject`, so the application cannot remove
+its own logs. Without this statement, file storage keeps working and activity events wait safely in
+MongoDB, with a notice on the Activity page, until the permission is granted. Logs are kept
+indefinitely; add an S3 lifecycle rule on `activity-logs/` if you want them to expire.
 
 `s3:PutObject` also covers `CreateMultipartUpload`, `UploadPart` and `CompleteMultipartUpload`;
 `DeleteObjects` (batch) is authorised per key by `s3:DeleteObject`. Presigned URLs carry the
@@ -123,7 +134,7 @@ working when the role's session credentials expire, which may be sooner than the
 Use MongoDB 6+ (Atlas or self-hosted) with authentication and TLS:
 
 ```
-MONGODB_URI=mongodb+srv://cirrus-app:<password>@cluster0.example.mongodb.net/cirrus?retryWrites=true&w=majority
+MONGODB_URI=mongodb+srv://ageless-datahub-app:<password>@cluster0.example.mongodb.net/ageless-datahub?retryWrites=true&w=majority
 ```
 
 Give the app user `readWrite` on its database only. The API creates indexes at start-up
@@ -133,25 +144,26 @@ Give the app user `readWrite` on its database only. The API creates indexes at s
 
 ```bash
 npm ci
-npm run build                       # server/dist and client/dist
-cp .env.example server/.env         # or inject env vars from your secret manager
-NODE_ENV=production node server/dist/index.js
+npm run build                       # backend/dist and frontend/dist
+cp .env.example backend/.env         # or inject env vars from your secret manager
+NODE_ENV=production node backend/dist/index.js
 ```
 
 Production checklist:
 
 - `NODE_ENV=production` (secure `__Host-` cookies, https-only `FRONTEND_URL`).
 - `SESSION_SECRET` from a secret manager (≥32 random chars), not from a committed file.
+- `ADMIN_LOGIN_USERNAME` and `ADMIN_LOGIN_PASSWORD` from a secret manager. Never in a `VITE_` variable.
 - Serve the SPA and the API on the **same site** (e.g. `https://drive.example.com` for the SPA and
   `https://drive.example.com/api` reverse-proxied to Node). Session cookies are `SameSite=Lax`;
   a different site for the API would need `SameSite=None` and is not supported as configured.
 - Set `TRUST_PROXY` to the number of proxies in front of Node so rate limits see real client IPs.
-- Serve `client/dist` from a CDN or the reverse proxy with an SPA fallback to `index.html`, and a
+- Serve `frontend/dist` from a CDN or the reverse proxy with an SPA fallback to `index.html`, and a
   Content-Security-Policy such as:
   `default-src 'self'; img-src 'self' data: https://BUCKET.s3.REGION.amazonaws.com; media-src https://BUCKET.s3.REGION.amazonaws.com; frame-src https://BUCKET.s3.REGION.amazonaws.com; connect-src 'self' https://BUCKET.s3.REGION.amazonaws.com; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'`
 - Run one or more API instances; maintenance jobs coordinate through a lock in MongoDB, so only one
   instance runs them at a time.
-- Schedule `npm run reconcile --workspace server` (e.g. daily) and alert on its output.
+- Schedule `npm run reconcile --workspace backend` (e.g. daily) and alert on its output.
 - Health check: `GET /api/health`.
 
 Example nginx front:
@@ -162,13 +174,13 @@ server {
   server_name drive.example.com;
   client_max_body_size 1m;            # uploads go straight to S3, never through nginx
   location /api/ { proxy_pass http://127.0.0.1:4000; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; }
-  location / { root /srv/cirrus/client/dist; try_files $uri /index.html; }
+  location / { root /srv/ageless-datahub/frontend/dist; try_files $uri /index.html; }
 }
 ```
 
 ## 5. Smoke test after deploying
 
-Register a user; create nested folders; upload a PDF, an image and a video larger than
+Sign in with the admin credentials; create nested folders; upload a PDF, an image and a video larger than
 `MULTIPART_THRESHOLD_MB`; preview each (seek in the video); download; rename and move; Trash and
 restore; delete forever and confirm the object is gone from the bucket (`aws s3 ls s3://$BUCKET/users/ --recursive`);
 sign in as a second user and confirm the first user's ids return 404.

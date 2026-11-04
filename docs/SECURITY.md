@@ -7,10 +7,18 @@
   verification so timing does not reveal which accounts exist. Login errors are generic.
 - Sessions are random 256-bit tokens in an HTTP-only, `SameSite=Lax` cookie (`Secure` and
   `__Host-` prefixed in production). Only a SHA-256 hash is stored server-side, with a TTL.
-  Logout deletes the session; a password change revokes all other sessions.
+  Logout deletes the session. Restarting with a changed `ADMIN_LOGIN_USERNAME` or
+  `ADMIN_LOGIN_PASSWORD` revokes every session.
+- There is one login and no registration. Credentials come only from the backend environment and
+  are compared by SHA-256 digest with `timingSafeEqual`, always checking both values. An Argon2id
+  hash in the database is used only to notice a changed password at startup. The startup check
+  rejects passwords under 12 characters and the example value.
 - The user id always comes from the server-side session, never from the request.
-- Rate limits: 10 failed auth attempts / 15 min / IP on register, login and password change;
-  600 requests / min / IP on the API overall.
+- Rate limits: 10 failed login attempts / 15 min / IP; 600 requests / min / IP on the API overall.
+- 20 consecutive failed logins from any mix of addresses pause all logins for 15 minutes. Someone
+  could trigger this on purpose to keep the administrator out, and restarting the backend clears it.
+- Activity logs never contain passwords, tokens or AWS credentials. A failed login records only the
+  time, the IP address and the fact that it failed, not what was typed.
 
 **CSRF**
 - State-changing authenticated requests require `X-CSRF-Token`, an HMAC of the session token hash
@@ -36,7 +44,10 @@
 
 **S3**
 - Bucket is private with Block Public Access (see DEPLOYMENT.md). No public or permanent URLs.
-- Object keys are server-generated (`users/<ownerId>/<uuid>`); user file names never reach keys.
+- Object keys are built by the server as `users/<ownerId>/<cleaned file name>`. Path separators,
+  control characters and characters unsafe in keys are removed, so a name cannot leave the owner's
+  prefix, and a key already in use (in records or in S3) is never issued again. File names are
+  therefore visible to anyone who can list the bucket, and appear in presigned URLs.
 - Presigned URLs live 15 minutes by default, are issued only to the owner, and are never logged
   (only paths are logged; response bodies are not). API responses carrying them are `no-store`.
 - Upload URLs sign `Content-Type` and `Content-Length`, so the browser cannot upload a different
@@ -50,8 +61,9 @@
   browser. HTML, SVG, scripts and executables are rejected.
 - After upload the API checks: object exists, size equals the reserved size, and the first bytes
   match the file type's signature (magic number); text files must not contain NUL bytes. Failures
-  delete the object and release the quota.
-- Per-file size limit and per-user quota are enforced server-side, atomically.
+  delete the object and release its reservation.
+- The per-file size limit is enforced server-side. There is no storage quota, so watch AWS billing:
+  set an AWS Budgets alert on the account.
 - Inline previews are only issued for types browsers render safely (images except SVG, PDF,
   audio/video, plain text/markdown); everything else downloads with `Content-Disposition: attachment`.
 
@@ -65,11 +77,10 @@
 - **Malware scanning.** Signature checks are not antivirus. Add asynchronous scanning (e.g. GuardDuty
   Malware Protection for S3, or ClamAV on an S3 event) and quarantine flagged objects before preview
   or download.
-- **Account lifecycle:** no email verification, password reset, MFA or account deletion flow.
+- **Single login:** no MFA, and everyone who has the password is the same user in the activity log.
+  If the password is lost, set a new one in the environment and restart.
 - **Account lookup when sharing**: adding someone by email says whether an account exists (rate
   limited to 60 attempts / 15 min / IP). Switch to invitations if that matters for your users.
-- **Email enumeration on register** (409 on an existing email) is accepted for UX; add verification
-  emails if this matters.
 - **Rate limiting is in-memory per instance.** With several API instances behind a load balancer,
   use a shared store (Redis) for `express-rate-limit`, or rate-limit at the edge (WAF).
 - **Presigned URLs are bearer tokens** until they expire. Shorten `PRESIGNED_URL_TTL_SECONDS` if

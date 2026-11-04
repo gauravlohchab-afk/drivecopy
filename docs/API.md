@@ -1,6 +1,6 @@
 # REST API
 
-Base path: `/api`. JSON in, JSON out. All routes except register/login/logout/health require a
+Base path: `/api`. JSON in, JSON out. All routes except login/logout/health require a
 session cookie. Every resource is scoped to the signed-in user; ids belonging to someone else
 return **404** (never 403), exactly like ids that do not exist.
 
@@ -8,7 +8,7 @@ return **404** (never 403), exactly like ids that do not exist.
 
 - **Auth:** HTTP-only session cookie (`dc_session`, `__Host-dc_session` in production).
 - **CSRF:** authenticated `POST`/`PATCH`/`DELETE` requests must send `X-CSRF-Token` equal to the
-  `csrfToken` returned by login/register/me (also in the readable `dc_csrf` cookie). Any `Origin`
+  `csrfToken` returned by login/me (also in the readable `dc_csrf` cookie). Any `Origin`
   header must equal `FRONTEND_URL`.
 - **Folder references:** `null` or `"root"` means the top of My Drive.
 - **Pagination:** list endpoints take `limit` (1–200, default 50) and `cursor`; responses include
@@ -25,7 +25,7 @@ return **404** (never 403), exactly like ids that do not exist.
 | 404 | `NOT_FOUND` | Unknown id or not yours |
 | 409 | `CONFLICT` / `UPLOAD_STATE` / `UPLOAD_NOT_VERIFIED` / `BUSY` | Duplicate email; upload not in a valid state; object missing or parts missing (`details.missingParts`); concurrent tree change (retry) |
 | 410 | `UPLOAD_EXPIRED` | Upload session expired; start again |
-| 413 | `FILE_TOO_LARGE` / `QUOTA_EXCEEDED` | Over the per-file limit / not enough space (`details.available`) |
+| 413 | `FILE_TOO_LARGE` | Over the per-file limit |
 | 415 | `UNSUPPORTED_FILE_TYPE` | Type not allowed, content does not match the extension, or not previewable |
 | 422 | `UPLOAD_NOT_VERIFIED` | Object in storage has the wrong size (upload rejected and removed) |
 | 429 | `RATE_LIMITED` | Too many attempts |
@@ -47,14 +47,14 @@ return **404** (never 403), exactly like ids that do not exist.
 
 | Method | Path | Body | Response |
 | --- | --- | --- | --- |
-| POST | `/auth/register` | `{name, email, password}` (password ≥10 chars, letters + digits) | `201 {user, csrfToken}` + cookies |
-| POST | `/auth/login` | `{email, password}` | `{user, csrfToken}` + cookies |
+| POST | `/auth/login` | `{username, password}`, checked against `ADMIN_LOGIN_USERNAME` / `ADMIN_LOGIN_PASSWORD` | `{user, csrfToken}` + cookies |
 | POST | `/auth/logout` | – | `204`, session revoked |
 | GET | `/auth/me` | – | `{user, csrfToken}` |
 | PATCH | `/auth/me` | `{name}` | `{user}` |
-| POST | `/auth/password` | `{currentPassword, newPassword}` | `204`, other sessions revoked |
 
-Register/login/password are limited to 10 failed attempts per 15 minutes per IP.
+There is no registration or password change endpoint. Credentials are set in the backend environment
+and apply on restart. Login allows 10 failed attempts per 15 minutes per IP, and 20 consecutive
+failures from anywhere pause all logins for 15 minutes (`429 RATE_LIMITED`).
 
 ## Folders
 
@@ -95,7 +95,7 @@ Presigned URLs expire after `PRESIGNED_URL_TTL_SECONDS` (default 900). Responses
 | GET | `/uploads/:id` | Session status |
 | POST | `/uploads/:id/url` | Fresh single-part URL (retry / expired URL) |
 | POST | `/uploads/:id/complete` | Verifies the object and completes. Idempotent: repeats return the same `{status:"completed", file}` |
-| POST | `/uploads/:id/cancel` | Cancels, deletes partial data, releases quota. Idempotent |
+| POST | `/uploads/:id/cancel` | Cancels, deletes partial data, releases the reservation. Idempotent |
 | POST | `/uploads/:id/multipart/part-url` | `{partNumbers:[1..]}` (≤100 per call) → `{parts:[{partNumber,size,url}]}` |
 | POST | `/uploads/:id/multipart/complete` | `{parts:[{partNumber, etag}]}`. Checks parts with S3 `ListParts`; 409 with `missingParts` if any are missing or mismatched |
 | POST | `/uploads/:id/multipart/abort` | Same as cancel |
@@ -126,7 +126,7 @@ shared with you. Viewers opening a file don't change the owner's Recent list.
 
 ## Shared drives
 
-A shared drive owns its files through a non-login principal account (`kind: "drive"`) that also carries its storage quota. Roles: `manager` > `content_manager` > `viewer`. Non-members get 404 for everything about a drive.
+A shared drive owns its files through a non-login principal account (`kind: "drive"`) that also carries its usage counters. Roles: `manager` > `content_manager` > `viewer`. Non-members get 404 for everything about a drive.
 
 | Method | Path | Notes |
 | --- | --- | --- |
@@ -153,9 +153,10 @@ Inside a drive, the regular routes are available under `/drives/:id`: `folders` 
 | GET | `/search` | `q` (name), `type` (`folder`, `image`, `video`, `audio`, `pdf`, `document`, `spreadsheet`, `presentation`, `text`, `archive`), `folderId` (that folder and its subfolders), `modifiedAfter`, `modifiedBefore` (ISO dates), `owner` (`any`, `me`, `others` or an email), `location` (`anywhere`, `mydrive`, `shared`), `inTrash`, `starred` (`true`), `sharedTo` (email: items you shared with them), `sizeMin`, `sizeMax` (bytes; files only), sort/order/limit/cursor. Covers your items (paginated) plus, on the first page, items shared with you directly or inside shared folders (up to 200, carrying `owner`) |
 | GET | `/recent` | Files by last activity (upload, rename, move, preview, download) |
 | GET | `/starred` | `{folders, files}` |
-| GET | `/storage/usage` | `{quota, used, reserved, inTrash, remaining}` in bytes |
+| GET | `/storage/usage` | `{used, reserved, inTrash}` in bytes, for the signed-in account |
+| GET | `/storage/s3` | Admin only. Cached bucket figures: `{storageType: "Amazon S3", status: "connected" \| "checking" \| "unavailable", totalBytes, totalFiles, totalSize, lastVerifiedAt, lastUpdatedAt}`. The numbers are `null` until a listing has succeeded, and during an outage they are the last verified ones. Counts objects under `users/`, including files in Trash, since those remain in S3 |
 | GET | `/home` | Suggested items: `{folders, files}` you used most recently, merged with items recently shared with you (which carry `owner`) |
-| GET | `/activity` | `limit`, `cursor`. `{items: [{id, action, at, actor, owner, target, item: {id, kind, name}, detail}], nextCursor}`. Actions: `upload`, `create_folder`, `rename` (detail = old name), `move` (detail = destination), `trash`, `restore`, `delete`, `share`, `unshare`, `download`. Includes what you did, what happened to your items, and shares with you |
+| GET | `/activity` | Admin only, read from S3. Query: `limit` (1–100, default 30), `cursor`, `q` (name or action), `category` (`file`, `folder`, `sharing`, `auth`), `status` (`SUCCESS`, `FAILED`), `from`, `to` (ISO dates). Returns `{items: [{id, eventType, category, action, status, at, actor, target, item: {id, kind, name} \| null, details}], nextCursor, logStorage: {status: "ok" \| "degraded", pendingEvents, reason}}`. A page can be shorter than `limit` while `nextCursor` is set, because the work per request is capped. Event types are listed in [STORAGE_POLICY.md](STORAGE_POLICY.md) |
 | GET | `/storage/breakdown` | `{byCategory: [{category, bytes, count}], largestFolders: [{folder, bytes}]}` for active (not trashed) files; folder sizes include subfolders |
 | GET | `/workspaces` | `{workspaces: [{id, name, hidden, itemCount, createdAt, updatedAt}]}` (your own only) |
 | POST | `/workspaces` | `{name, items?: [{id, kind}]}` → `201 {workspace}`. Items must be readable by you (own or shared); max 25 per workspace, 100 workspaces |
