@@ -33,7 +33,7 @@ describe('single-part uploads', () => {
     expect(url.searchParams.get('X-Amz-SignedHeaders')).toContain('content-length');
     expect(url.searchParams.get('X-Amz-SignedHeaders')).toContain('content-type');
     const key = await keyOf(res.body.uploadId);
-    expect(key).toBe(`users/${c.user.id}/etcpasswd.pdf`); // Stays inside the owner's prefix.
+    expect(key).toBe(`users/${c.email}/etcpasswd.pdf`); // Stays inside the account's prefix.
     const file = await FileModel.findById(res.body.fileId).lean();
     expect(file!.name).toBe('....etcpasswd.pdf');
   });

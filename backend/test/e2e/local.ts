@@ -157,10 +157,12 @@ app.use((_req, res) => {
 const { ensureAdminAccount } = await import('../../src/services/admin.service.js');
 const { activityService } = await import('../../src/services/activity.service.js');
 const { s3StatsService } = await import('../../src/services/s3Stats.service.js');
+const { s3LayoutService } = await import('../../src/services/s3Layout.service.js');
 await ensureAdminAccount();
 const stopJobs = scheduleMaintenance();
 const stopActivity = activityService.startFlusher();
 const stopStats = s3StatsService.startScheduler();
+const stopLayout = s3LayoutService.startJob();
 
 const storage = realS3 ? `Amazon S3 bucket ${process.env.AWS_S3_BUCKET} (${process.env.AWS_REGION})` : 'built-in fake S3';
 const server = app.listen(PORT, (err) => {
@@ -172,6 +174,7 @@ const stop = async () => {
   stopJobs();
   stopActivity();
   stopStats();
+  stopLayout();
   server.close();
   await activityService.flush().catch(() => undefined); // Anything unwritten stays in the outbox.
   await mongo.stop({ doCleanup: false });

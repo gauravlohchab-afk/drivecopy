@@ -62,9 +62,8 @@ On startup, every account other than the admin is moved to it:
 
 - Each account's top-level items go into an `Imported from <email>` folder in the admin's My Drive,
   with their structure intact. Trash, workspaces, sharing records and uploads in progress move too.
-- **Only metadata changes.** Each file record keeps its existing `s3Key`, so nothing in S3 is copied,
-  renamed or uploaded again. Older keys keep their original `users/<old account id>/` prefix, which is
-  harmless because keys are always read from the record.
+- **Only metadata changes.** Each file record keeps its existing `s3Key`, so nothing in S3 is copied or
+  uploaded again by this step. `npm run sync-s3` (see S3 object names) moves those objects if wanted.
 - The admin becomes a manager of every shared drive. Existing members stay.
 - The former account record is kept, `status: "disabled"` with `mergedIntoUserId` set, and its
   sessions are ended.
@@ -97,16 +96,31 @@ files with different ids and different S3 objects. Items are always addressed by
 
 ## S3 object names
 
-New files are stored as `users/<ownerId>/<file name>`, so they are readable in the S3 console. If that
-key is taken, the next free number is used, such as `report (1).pdf`; the app still shows `report.pdf`.
+The bucket mirrors the app, so it is readable in the S3 console:
 
-The key is set once, at upload. Renaming or moving a file changes only its record, so after a rename
-the S3 name still shows the name it was uploaded with. Folders are not reflected in S3. Keys are always
-read from the record, so a file with an older UUID key works the same way.
+```text
+users/admin/Reports/2026/Q1 report.pdf
+users/Shared drive - Team/Docs/plan.pdf
+```
 
-`npm run rename-objects --workspace backend` gives UUID-keyed files a readable key. It shows the plan
-unless given `-- --apply --log <file>`. For each file it copies the object, verifies the copy, updates the
-records, logs the old and new key, and only then deletes the original. Running it again is safe.
+- **Files** upload directly to the right path. If a key is taken, the next free number is used, such as
+  `report (1).pdf`; the app still shows `report.pdf`.
+- **Folders** get an empty object ending in `/`, so a new folder shows in S3 before it holds any files.
+- **Renames and moves**, of files or folders, apply in the app immediately. A background job then updates
+  S3 within seconds: it copies each object, verifies the copy, updates the record, then deletes the
+  original. Moving a large folder means copying everything in it, so it takes as long as that takes.
+- **Reads** always use the key in the record, so a file works throughout, and a file not yet moved works
+  the same way. A presigned link issued just before a move stops working when the original is deleted;
+  opening the file again gets a new one. Failures are retried a minute later.
+- **Trash** is not reflected in S3: items stay at their path until permanently deleted.
+- **Same names:** S3 has no real folders, so two app folders with the same name in the same place share a
+  path there. They stay separate in the app, and their files never overwrite each other.
+- **Limits:** objects over 5 GB stay where they are, since S3 cannot copy them in one request. Trees too
+  deep for S3's 1024-byte key limit are placed at the top of the account.
+
+`npm run sync-s3 --workspace backend` brings existing data into this layout. It shows the plan unless given
+`-- --apply --log <file>`, which records each file's old and new key before deleting the original. Running
+it again is safe.
 
 ## Trash
 

@@ -20,6 +20,8 @@ npm run test:integration --workspace backend
     workspaces, drives, shares and in-progress uploads carried over, repeat and interrupted runs.
   - `activity-log`: JSON Lines objects and keys in S3, no overwrites, no secrets, sharing and sign-in
     events, paging across objects, filters, S3 outage and recovery, older history copied once.
+  - `s3-layout`: folders in S3, files following renames and moves, shared drives, failures at each
+    step of a move, concurrent renames, and bringing existing data across.
   - `s3-stats`: real figures with S3 pagination, caching, updates after upload and delete, listing
     races, outages, and no quota anywhere.
   - `folders`: nesting, breadcrumbs, validation, duplicates, rename/star, moves, self/descendant

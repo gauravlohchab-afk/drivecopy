@@ -15,8 +15,8 @@ const fileSchema = new Schema(
     mimeType: { type: String, required: true },
     category: { type: String, enum: FILE_CATEGORIES, required: true },
     size: { type: Number, required: true, min: 0 },
-    // users/<ownerId>/<file name at upload>. Older files use a UUID instead. Always read it from
-    // here, never rebuild it: it does not change on rename and is unique per object.
+    // Where the object is now, such as users/<account>/<folder>/<file name>. Always read it from here,
+    // never rebuild it: s3Layout.service updates it in the background, and it is unique per object.
     s3Key: { type: String, required: true },
     etag: { type: String },
     parentFolderId: { type: Types.ObjectId, ref: 'Folder', default: null },
@@ -26,6 +26,8 @@ const fileSchema = new Schema(
     deletedAt: { type: Date, default: null },
     trashRootId: { type: Types.ObjectId, default: null },
     purgePending: { type: Boolean, default: false },
+    // The object may need to move in S3 to match this record's name or folder.
+    s3SyncPending: { type: Boolean, default: false },
     lastActivityAt: { type: Date, default: () => new Date() },
   },
   { timestamps: true },
@@ -46,6 +48,7 @@ fileSchema.index({ ownerId: 1, nameLower: 1 });
 fileSchema.index({ ownerId: 1, category: 1 });
 fileSchema.index({ uploadStatus: 1, updatedAt: 1 });
 fileSchema.index({ purgePending: 1 });
+fileSchema.index({ s3SyncPending: 1 });
 
 export type FileDoc = HydratedDocument<InferSchemaType<typeof fileSchema>>;
 export const FileModel = model('File', fileSchema);

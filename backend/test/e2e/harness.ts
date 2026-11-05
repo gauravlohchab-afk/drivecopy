@@ -31,6 +31,8 @@ for (const model of Object.values(mongoose.models)) {
 
 const { ensureAdminAccount } = await import('../../src/services/admin.service.js');
 await ensureAdminAccount();
+const { s3LayoutService } = await import('../../src/services/s3Layout.service.js');
+s3LayoutService.startJob();
 
 const outer = express();
 outer.all('/__fake-s3/{*key}', express.raw({ type: () => true, limit: '200mb' }), (req, res) => {

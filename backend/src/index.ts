@@ -6,6 +6,7 @@ import { scheduleMaintenance } from './jobs/maintenance.js';
 import { ensureAdminAccount } from './services/admin.service.js';
 import { activityService } from './services/activity.service.js';
 import { s3StatsService } from './services/s3Stats.service.js';
+import { s3LayoutService } from './services/s3Layout.service.js';
 
 async function main() {
   await connectDb();
@@ -19,12 +20,14 @@ async function main() {
   const stopJobs = scheduleMaintenance();
   const stopActivity = activityService.startFlusher();
   const stopStats = s3StatsService.startScheduler();
+  const stopLayout = s3LayoutService.startJob();
 
   const shutdown = (signal: string) => {
     logger.info({ signal }, 'Shutting down');
     stopJobs();
     stopActivity();
     stopStats();
+    stopLayout();
     server.close(() => {
       activityService
         .flush()

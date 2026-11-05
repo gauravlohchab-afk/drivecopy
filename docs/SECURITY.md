@@ -44,10 +44,11 @@
 
 **S3**
 - Bucket is private with Block Public Access (see DEPLOYMENT.md). No public or permanent URLs.
-- Object keys are built by the server as `users/<ownerId>/<cleaned file name>`. Path separators,
-  control characters and characters unsafe in keys are removed, so a name cannot leave the owner's
-  prefix, and a key already in use (in records or in S3) is never issued again. File names are
-  therefore visible to anyone who can list the bucket, and appear in presigned URLs.
+- Object keys are built by the server as `users/<account>/<folders>/<cleaned file name>`. Path
+  separators, control characters and characters unsafe in keys are removed from every part, so a name
+  cannot leave its directory, and a key already in use (in records or in S3) is never issued again.
+  The account's username, folder names and file names are therefore visible to anyone who can list the
+  bucket, and appear in presigned URLs. Access still comes only from records, never from a key's path.
 - Presigned URLs live 15 minutes by default, are issued only to the owner, and are never logged
   (only paths are logged; response bodies are not). API responses carrying them are `no-store`.
 - Upload URLs sign `Content-Type` and `Content-Length`, so the browser cannot upload a different

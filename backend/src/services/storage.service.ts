@@ -89,6 +89,7 @@ export const storageService = {
   async reconcileObjects(opts: { deleteOrphans: boolean }) {
     const orphanObjects: string[] = [];
     for await (const obj of s3Service.listObjects('users/')) {
+      if (obj.key.endsWith('/')) continue; // A folder marker, not a file.
       const known = (await FileModel.exists({ s3Key: obj.key })) || (await UploadSession.exists({ s3Key: obj.key }));
       // Give in-flight uploads a day before calling an object an orphan.
       if (!known && obj.lastModified && obj.lastModified.getTime() < Date.now() - 24 * 3600_000) orphanObjects.push(obj.key);

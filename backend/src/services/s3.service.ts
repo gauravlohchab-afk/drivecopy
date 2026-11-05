@@ -51,13 +51,19 @@ function trimToBytes(text: string, max: number) {
   return out;
 }
 
+/** One path segment of a key, for a folder or account. It cannot contain a separator or be ".." */
+export function keySegment(name: string, maxBytes: number, fallback: string): string {
+  const clean = name.normalize('NFC').replace(UNSAFE_KEY_CHARS, '_').replace(/\.{2,}/g, '.').replace(/\s+/g, ' ').trim();
+  return trimToBytes(clean, maxBytes).replace(/^\.+/, '').replace(/[.\s]+$/, '') || fallback;
+}
+
 /**
- * users/<ownerId>/<file name>, readable in the S3 console. The name is cleaned first, so it cannot
- * leave the owner's prefix. attempt > 0 gives "report (1).pdf", because different files can share a
- * name; choosing a free attempt is up to the caller. The key is fixed once the upload starts.
+ * <dir><file name>, with dir from s3Layout.service. The name is cleaned first, so it cannot leave the
+ * directory. attempt > 0 gives "report (1).pdf", because different files can share a name; choosing a
+ * free attempt is up to the caller.
  */
-export function objectKeyFor(ownerId: string, fileName: string, attempt = 0): string {
-  if (!/^[a-f\d]{24}$/i.test(ownerId)) throw new Error('Invalid owner id for object key');
+export function objectKeyFor(dir: string, fileName: string, attempt = 0): string {
+  if (!dir.startsWith('users/') || !dir.endsWith('/')) throw new Error('Invalid directory for object key');
   const clean = fileName.normalize('NFC').replace(UNSAFE_KEY_CHARS, '_').replace(/\.{2,}/g, '.').replace(/\s+/g, ' ').trim();
   const dot = clean.lastIndexOf('.');
   const ext = dot > 0 ? clean.slice(dot) : '';
@@ -65,7 +71,7 @@ export function objectKeyFor(ownerId: string, fileName: string, attempt = 0): st
   const suffix = attempt > 0 ? ` (${attempt})` : '';
   const room = MAX_KEY_NAME_BYTES - Buffer.byteLength(suffix) - Buffer.byteLength(ext);
   const safeStem = trimToBytes(stem, room).replace(/^\.+/, '').trim() || 'file';
-  return `users/${ownerId}/${safeStem}${suffix}${ext}`;
+  return `${dir}${safeStem}${suffix}${ext}`;
 }
 
 export function isNotFound(err: unknown): boolean {
@@ -169,6 +175,12 @@ export const s3Service = {
       if (isNotFound(err)) return null;
       throw storageError('head', err);
     }
+  },
+
+  /** An empty object ending in "/", which S3 shows as a folder even when nothing is in it. */
+  async putFolderMarker(key: string) {
+    if (!key.startsWith('users/') || !key.endsWith('/')) throw new Error('Invalid folder key');
+    await wrap('putFolderMarker', () => s3.send(new PutObjectCommand({ Bucket, Key: key, Body: '', ContentLength: 0, ContentType: 'application/x-directory' })));
   },
 
   /** Copies within the bucket, keeping content type and metadata. False if the target already exists. */

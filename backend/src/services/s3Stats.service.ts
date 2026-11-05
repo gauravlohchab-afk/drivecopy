@@ -45,6 +45,7 @@ async function scan() {
   let totalFiles = 0;
   let renewedAt = Date.now();
   for await (const obj of s3Service.listObjects(FILES_PREFIX)) {
+    if (obj.key.endsWith('/')) continue; // A folder marker, not a file.
     totalBytes += obj.size;
     totalFiles++;
     if (Date.now() - renewedAt > SCAN_LOCK_RENEW_MS) {

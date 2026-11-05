@@ -8,6 +8,7 @@ import { fileDto } from '../lib/serialize.js';
 import { logger } from '../lib/logger.js';
 import { resolveDestination } from './folder.service.js';
 import { s3Service, objectKeyFor } from './s3.service.js';
+import { folderDir } from './s3Layout.service.js';
 import { activityService } from './activity.service.js';
 import { s3StatsService } from './s3Stats.service.js';
 
@@ -130,7 +131,8 @@ async function verifyAndFinalize(session: UploadSessionDoc, actorId: Types.Objec
   }
 
   // Inherit the parent's state if it changed while the upload was in flight.
-  const update: Record<string, unknown> = { uploadStatus: 'completed', size: head.size, etag: head.etag, lastActivityAt: new Date() };
+  // Flagged because its folder may have been renamed or moved while the upload ran.
+  const update: Record<string, unknown> = { uploadStatus: 'completed', size: head.size, etag: head.etag, lastActivityAt: new Date(), s3SyncPending: true };
   if (session.parentFolderId) {
     const parent = await Folder.findOne({ _id: session.parentFolderId, ownerId: session.ownerId }).lean();
     if (!parent || parent.purgePending) update.parentFolderId = null;
@@ -154,9 +156,9 @@ const MAX_NAME_ATTEMPTS = 1000;
  * Creates the session under the first free key for this name. An existing object is never reused:
  * records and S3 are both checked, and the unique index on s3Key settles uploads racing for a name.
  */
-async function createSessionWithFreeKey(ownerId: string, name: string, fields: Record<string, unknown>) {
+async function createSessionWithFreeKey(dir: string, name: string, fields: Record<string, unknown>) {
   for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt++) {
-    const s3Key = objectKeyFor(ownerId, name, attempt);
+    const s3Key = objectKeyFor(dir, name, attempt);
     if ((await UploadSession.exists({ s3Key })) || (await FileModel.exists({ s3Key })) || (await s3Service.head(s3Key))) continue;
     try {
       return await UploadSession.create({ ...fields, s3Key });
@@ -186,7 +188,7 @@ export const uploadService = {
     let multipartUploadId: string | null = null;
     try {
       const plan = multipart ? planParts(input.size) : null;
-      const session = await createSessionWithFreeKey(owner.userIdStr, name, {
+      const session = await createSessionWithFreeKey(await folderDir(owner.userId, input.parentFolderId), name, {
         _id: uploadId,
         ownerId: owner.userId,
         fileId,

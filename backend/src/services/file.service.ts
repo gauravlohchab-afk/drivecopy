@@ -40,10 +40,11 @@ export const fileService = {
     return fileDto((await getActiveFile(owner.userId, fileId)).toObject());
   },
 
-  /** Rename / star. Metadata only: the S3 object is never copied. */
+  /** Rename / star. Changes the record now; the object follows in the background (s3Layout.service). */
   async update(owner: Owner, fileId: Types.ObjectId, patch: { name?: string; isStarred?: boolean }) {
     const set: Record<string, unknown> = { ...patch };
     if (patch.name) set.nameLower = patch.name.toLowerCase();
+    if (patch.name) set.s3SyncPending = true;
     if (patch.name) set.lastActivityAt = new Date();
     const before = patch.name ? await FileModel.findOne({ _id: fileId, ...activeFile(owner.userId) }, { name: 1 }).lean() : null;
     const file = await FileModel.findOneAndUpdate({ _id: fileId, ...activeFile(owner.userId) }, { $set: set }, { new: true, runValidators: true }).lean();
@@ -54,13 +55,13 @@ export const fileService = {
     return fileDto(file);
   },
 
-  /** Moving changes parentFolderId only; the object key is independent of the folder tree. */
+  /** Changes the record now; the object follows in the background (s3Layout.service). */
   async move(owner: Owner, fileId: Types.ObjectId, destinationId: Types.ObjectId | null) {
     return treeLock(owner.userIdStr, async () => {
       const destination = await resolveDestination(owner.userId, destinationId);
       const file = await FileModel.findOneAndUpdate(
         { _id: fileId, ...activeFile(owner.userId) },
-        { $set: { parentFolderId: destinationId, lastActivityAt: new Date() } },
+        { $set: { parentFolderId: destinationId, lastActivityAt: new Date(), s3SyncPending: true } },
         { new: true },
       ).lean();
       if (!file) throw notFound('File');

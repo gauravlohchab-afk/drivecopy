@@ -5,6 +5,7 @@ import { FileModel, Folder, Session, Settlement, Share, SharedDrive, UploadSessi
 import { withLock } from '../lib/lock.js';
 import { logger } from '../lib/logger.js';
 import { storageService } from './storage.service.js';
+import { s3LayoutService } from './s3Layout.service.js';
 
 // Argon2id with OWASP-recommended parameters (m=19 MiB, t=2, p=1).
 const ARGON_OPTS = { memoryCost: 19_456, timeCost: 2, parallelism: 1 } as const;
@@ -38,6 +39,7 @@ async function resolveAdmin() {
     }
     admin.email = username;
     await Session.deleteMany({ userId: admin._id });
+    await s3LayoutService.flagAccount(admin._id);
   }
   // Logins compare against the environment. This hash only detects a changed password at startup,
   // so that sessions signed in with the old one stop working.

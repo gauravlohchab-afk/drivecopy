@@ -1,5 +1,5 @@
 import type { Types } from 'mongoose';
-import { Folder, FileModel, Share, User } from '../models/index.js';
+import { Folder, FileModel, Share, UploadSession, User } from '../models/index.js';
 import { notFound } from '../lib/errors.js';
 import { treeLock } from '../lib/lock.js';
 import { folderDto, fileDto } from '../lib/serialize.js';
@@ -8,6 +8,7 @@ import { activeFilter, descendantFolderIds } from './folder.service.js';
 import { s3Service } from './s3.service.js';
 import { activityService } from './activity.service.js';
 import { s3StatsService } from './s3Stats.service.js';
+import { releaseFolderMarker } from './s3Layout.service.js';
 
 type Owner = { userId: Types.ObjectId; userIdStr: string; actorId?: Types.ObjectId };
 
@@ -78,6 +79,7 @@ export const trashService = {
         const parentActive = await Folder.exists({ _id: parentId, ...activeFilter(owner.userId) });
         if (!parentActive) {
           root.doc.parentFolderId = null;
+          root.doc.s3SyncPending = true;
           await root.doc.save();
           restoredToRoot = true;
         }
@@ -146,6 +148,8 @@ export const purgeService = {
         }
         const removed = await FileModel.findOneAndDelete({ _id: f._id, purgePending: true }).lean();
         if (removed) await Share.deleteMany({ itemId: removed._id });
+        // The object is gone, so its name can be used again.
+        if (removed) await UploadSession.updateOne({ _id: removed.uploadId }, { $set: { s3Key: `released/${String(removed.uploadId)}` } });
         if (removed && removed.uploadStatus === 'completed') {
           await User.updateOne({ _id: removed.ownerId }, { $inc: { storageUsed: -removed.size } });
           freedBytes += removed.size;
@@ -158,16 +162,20 @@ export const purgeService = {
 
     // Folders go once none of their purge-pending files remain. Items that were trashed on their
     // own earlier (and are not being purged) are moved to the root instead of being orphaned.
-    const folders = await Folder.find({ ...scope, purgePending: true }, { _id: 1, ownerId: 1 }).lean();
+    const folders = await Folder.find({ ...scope, purgePending: true }, { _id: 1, ownerId: 1, s3Prefix: 1 }).lean();
     let deletedFolders = 0;
     for (const folder of folders) {
       const pendingChildren = await FileModel.exists({ parentFolderId: folder._id, purgePending: true });
       if (pendingChildren) continue;
       const survivors = { ownerId: folder.ownerId, parentFolderId: folder._id, purgePending: false };
-      await FileModel.updateMany(survivors, { $set: { parentFolderId: null } });
-      await Folder.updateMany(survivors, { $set: { parentFolderId: null } });
+      await FileModel.updateMany(survivors, { $set: { parentFolderId: null, s3SyncPending: true } });
+      await Folder.updateMany(survivors, { $set: { parentFolderId: null, s3SyncPending: true } });
       const res = await Folder.deleteOne({ _id: folder._id, purgePending: true });
       if (res.deletedCount) await Share.deleteMany({ itemId: folder._id });
+      if (res.deletedCount) {
+        // An empty marker left behind is harmless, so this must not fail the delete.
+        await releaseFolderMarker(folder.s3Prefix).catch((err) => logger.warn({ err: (err as Error).message }, 'Could not remove a folder from S3'));
+      }
       deletedFolders += res.deletedCount;
     }
 

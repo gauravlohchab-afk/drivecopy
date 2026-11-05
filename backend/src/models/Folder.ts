@@ -14,6 +14,9 @@ const folderSchema = new Schema(
     trashRootId: { type: Types.ObjectId, default: null },
     // Set when permanent deletion has started; the purge worker finishes the job.
     purgePending: { type: Boolean, default: false },
+    // Where this folder currently appears in S3, and whether that may need updating.
+    s3Prefix: { type: String, default: null },
+    s3SyncPending: { type: Boolean, default: true },
     lastActivityAt: { type: Date, default: () => new Date() },
     // Set on the folder holding a former account's items after they moved to the admin.
     importedFromUserId: { type: Types.ObjectId, ref: 'User', default: null },
@@ -30,6 +33,8 @@ folderSchema.index({ ownerId: 1, trashRootId: 1 });
 folderSchema.index({ ownerId: 1, isStarred: 1, deletedAt: 1 });
 folderSchema.index({ ownerId: 1, nameLower: 1 });
 folderSchema.index({ purgePending: 1 });
+folderSchema.index({ s3SyncPending: 1 });
+folderSchema.index({ s3Prefix: 1 });
 
 export type FolderDoc = HydratedDocument<InferSchemaType<typeof folderSchema>>;
 export const Folder = model('Folder', folderSchema);

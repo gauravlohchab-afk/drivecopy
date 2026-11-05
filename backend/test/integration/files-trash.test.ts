@@ -17,14 +17,12 @@ const mk = async (name: string, parentFolderId: string | null = null) => (await 
 const usage = async () => (await c.get('/api/storage/usage').expect(200)).body;
 
 describe('readable S3 keys', () => {
-  const keyOf = async (id: string) => (await FileModel.findById(id).lean())!.s3Key;
-  const prefix = () => `users/${c.user.id}/`;
+  const prefix = () => `users/${c.email}/`;
 
-  it('stores a new file under its own name, and keeps it through rename, move and download', async () => {
+  it('stores a new file under its own name, and downloads under its current name', async () => {
     const file = await uploadFile(c, s3, 'Key Test Certificate.pdf', pdfBytes());
     expect(file.s3Key).toBe(`${prefix()}Key Test Certificate.pdf`);
     await c.patch(`/api/files/${file.id}`, { name: 'Renamed.pdf' }).expect(200);
-    expect(await keyOf(file.id)).toBe(file.s3Key);
     const url = (await c.post(`/api/files/${file.id}/download-url`).expect(200)).body.url as string;
     expect(decodeURIComponent(url)).toContain('Renamed.pdf');
   });

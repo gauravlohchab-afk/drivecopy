@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mockClient } from 'aws-sdk-client-mock';
 import { S3Client, HeadObjectCommand, DeleteObjectsCommand, AbortMultipartUploadCommand } from '@aws-sdk/client-s3';
-import { s3Service, objectKeyFor, contentDisposition } from '../../src/services/s3.service.js';
+import { s3Service, objectKeyFor, keySegment, contentDisposition } from '../../src/services/s3.service.js';
 import { planParts } from '../../src/services/upload.service.js';
 
 const mock = mockClient(S3Client);
@@ -9,13 +9,14 @@ beforeEach(() => mock.reset());
 
 describe('S3 service', () => {
   describe('object keys', () => {
-    const owner = 'a'.repeat(24);
-    const key = (name: string, attempt = 0) => objectKeyFor(owner, name, attempt).slice(`users/${owner}/`.length);
+    const dir = 'users/admin/Reports/';
+    const key = (name: string, attempt = 0) => objectKeyFor(dir, name, attempt).slice(dir.length);
 
-    it('uses the file name, under the owner, and refuses bad owner ids', () => {
+    it('uses the file name, under the directory, and refuses a bad directory', () => {
       expect(key('Master of Business Administration(MBA).pdf')).toBe('Master of Business Administration(MBA).pdf');
       expect(key('résumé 2026.pdf')).toBe('résumé 2026.pdf');
-      expect(() => objectKeyFor('../x', 'a.pdf')).toThrow();
+      expect(() => objectKeyFor('../x/', 'a.pdf')).toThrow();
+      expect(() => objectKeyFor('users/x', 'a.pdf')).toThrow();
     });
 
     it('numbers repeats before the extension', () => {
@@ -24,11 +25,19 @@ describe('S3 service', () => {
       expect(key('notes', 3)).toBe('notes (3)');
     });
 
-    it('cannot leave the owner prefix, whatever the name', () => {
+    it('makes folder segments that cannot escape, with a fallback when nothing is left', () => {
+      expect(keySegment('Reports 2026', 100, 'folder')).toBe('Reports 2026');
+      expect(keySegment('a/b\\c', 100, 'folder')).toBe('a_b_c');
+      expect(keySegment('..', 100, 'folder')).toBe('folder');
+      expect(keySegment('name...', 100, 'folder')).toBe('name');
+      expect(Buffer.byteLength(keySegment('文'.repeat(100), 100, 'folder'))).toBeLessThanOrEqual(100);
+    });
+
+    it('cannot leave the directory, whatever the name', () => {
       for (const name of ['../../other/secret.pdf', '..\\..\\x.pdf', '/etc/passwd', '..', '.', '...pdf']) {
-        const k = objectKeyFor(owner, name);
-        expect(k.startsWith(`users/${owner}/`)).toBe(true);
-        expect(k.slice(`users/${owner}/`.length)).not.toContain('/');
+        const k = objectKeyFor(dir, name);
+        expect(k.startsWith(dir)).toBe(true);
+        expect(k.slice(dir.length)).not.toContain('/');
         expect(k).not.toContain('..');
       }
     });

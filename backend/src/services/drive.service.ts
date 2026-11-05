@@ -4,6 +4,7 @@ import { FileModel, Folder, SharedDrive, User, type DriveRole } from '../models/
 import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { storageService } from './storage.service.js';
 import { activityService } from './activity.service.js';
+import { s3LayoutService } from './s3Layout.service.js';
 
 type Owner = { userId: Types.ObjectId; userIdStr: string };
 
@@ -87,6 +88,7 @@ export const driveService = {
     requireRole(d, user, 'manager');
     await SharedDrive.updateOne({ _id: driveId }, { $set: { name } });
     await User.updateOne({ _id: d.principalId }, { $set: { name } });
+    await s3LayoutService.flagAccount(d.principalId);
     return summary({ ...d, name }, user.userId);
   },
 

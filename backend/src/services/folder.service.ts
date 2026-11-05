@@ -144,7 +144,7 @@ export const folderService = {
     const before = patch.name ? await Folder.findOne({ _id: folderId, ...activeFilter(owner.userId) }, { name: 1 }).lean() : null;
     const folder = await Folder.findOneAndUpdate(
       { _id: folderId, ...activeFilter(owner.userId) },
-      { $set: { ...patch, ...(patch.name ? { nameLower: patch.name.toLowerCase() } : {}), lastActivityAt: new Date() } },
+      { $set: { ...patch, ...(patch.name ? { nameLower: patch.name.toLowerCase(), s3SyncPending: true } : {}), lastActivityAt: new Date() } },
       { new: true, runValidators: true },
     ).lean();
     if (!folder) throw notFound('Folder');
@@ -175,6 +175,7 @@ export const folderService = {
       const newDepth = (await depthOf(owner.userId, destinationId)) + 1 + (await subtreeHeight(owner.userId, folderId));
       if (newDepth > MAX_DEPTH) throw new AppError(400, 'INVALID_MOVE', `Folders can be nested at most ${MAX_DEPTH} levels deep`);
       folder.parentFolderId = destinationId;
+      folder.s3SyncPending = true;
       folder.lastActivityAt = new Date();
       await folder.save();
       await activityService.record({ actorId: owner.actorId ?? owner.userId, action: 'move', kind: 'folder', item: folder, detail: destination?.name ?? 'My Drive' });

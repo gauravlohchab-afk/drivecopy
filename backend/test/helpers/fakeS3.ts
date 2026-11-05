@@ -63,8 +63,9 @@ export function createFakeS3() {
     };
   });
   mock.on(PutObjectCommand).callsFake((input) => {
-    // The server only ever writes its own activity logs. File uploads go directly from the browser.
-    if (!String(input.Key).startsWith('activity-logs/')) throw new Error('Server must never proxy uploads through PutObject');
+    // The server only writes activity logs and empty folder markers. File uploads go directly from the browser.
+    const isMarker = String(input.Key).endsWith('/') && !input.Body;
+    if (!String(input.Key).startsWith('activity-logs/') && !isMarker) throw new Error('Server must never proxy uploads through PutObject');
     guard('PutObject');
     if (input.IfNoneMatch === '*' && objects.has(input.Key)) {
       throw Object.assign(new Error('PreconditionFailed'), { name: 'PreconditionFailed', $metadata: { httpStatusCode: 412 } });
